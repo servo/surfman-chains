@@ -1,0 +1,12 @@
+[package]
+name = "swap-chains"
+version = "0.1.0"
+authors = ["Alan Jeffrey <ajeffrey@mozilla.com>"]
+edition = "2018"
+description = "An implementation of double-buffered swap chains for surfman"
+license = "MPL-2.0"
+
+[dependencies]
+euclid = "0.20"
+fnv = "1.0"
+surfman = { git = "https://github.com/pcwalton/surfman" }
