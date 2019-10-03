@@ -20,8 +20,8 @@ use std::sync::RwLockReadGuard;
 use std::sync::RwLockWriteGuard;
 
 use surfman::Context;
-use surfman::Error;
 use surfman::Device;
+use surfman::Error;
 use surfman::Surface;
 
 #[cfg(feature = "serde")]
@@ -44,7 +44,7 @@ struct ContextId(usize);
 impl<'a> From<&'a mut Context> for ContextId {
     fn from(context: &'a mut Context) -> ContextId {
         // TODO: context ids shouldn't just be addresses
-	ContextId(context as *const Context as usize)
+        ContextId(context as *const Context as usize)
     }
 }
 
@@ -60,39 +60,42 @@ struct SwapChainData {
 impl SwapChainData {
     fn validate_context(&self, context: &mut Context) -> Result<(), Error> {
         if self.context_id == ContextId::from(context) {
-	    Ok(())
-	} else {
-  	    Err(Error::IncompatibleContext)
-	}
+            Ok(())
+        } else {
+            Err(Error::IncompatibleContext)
+        }
     }
 
     fn swap_buffers(&mut self, device: &mut Device, context: &mut Context) -> Result<(), Error> {
         self.validate_context(context)?;
 
         // Fetch a new back buffer, recycling presented buffers if possible.
-	let new_back_buffer = self.presented_surfaces
-	    .iter()
-	    .position(|surface| surface.size() == self.size)
-	    .map(|index| Ok(self.presented_surfaces.swap_remove(index)))
-	    .unwrap_or_else(|| device.create_surface(context, &self.size))?;
+        let new_back_buffer = self
+            .presented_surfaces
+            .iter()
+            .position(|surface| surface.size() == self.size)
+            .map(|index| Ok(self.presented_surfaces.swap_remove(index)))
+            .unwrap_or_else(|| device.create_surface(context, &self.size))?;
 
         // Swap the buffers
-	let new_front_buffer = match self.unattached_front_buffer.as_mut() {
-	    Some(surface) => mem::replace(surface, new_back_buffer),
-	    None => device.replace_context_surface(context, new_back_buffer)?,
+        let new_front_buffer = match self.unattached_front_buffer.as_mut() {
+            Some(surface) => mem::replace(surface, new_back_buffer),
+            None => device.replace_context_surface(context, new_back_buffer)?,
         };
 
         // Updata the state
-	self.pending_surface = Some(new_front_buffer);
-	for surface in self.presented_surfaces.drain(..) {
-	    device.destroy_surface(context, surface)?;
-	}
+        self.pending_surface = Some(new_front_buffer);
+        for surface in self.presented_surfaces.drain(..) {
+            device.destroy_surface(context, surface)?;
+        }
 
-	Ok(())
+        Ok(())
     }
 
     fn take_surface(&mut self) -> Option<Surface> {
-        self.pending_surface.take().or_else(|| self.presented_surfaces.pop())
+        self.pending_surface
+            .take()
+            .or_else(|| self.presented_surfaces.pop())
     }
 
     fn recycle_surface(&mut self, surface: Surface) {
@@ -144,7 +147,8 @@ impl SwapChains {
         self.table().get(&id).cloned()
     }
 
-    pub fn get_with<F, T>(&self, id: SwapChainId, f: F) -> Option<T> where
+    pub fn get_with<F, T>(&self, id: SwapChainId, f: F) -> Option<T>
+    where
         F: Fn(&SwapChain) -> T,
     {
         self.table().get(&id).map(f)
@@ -152,16 +156,16 @@ impl SwapChains {
 
     pub fn create_swap_chain(&self, context: &mut Context, size: Size2D<i32>) -> SwapChainId {
         let id = SwapChainId(self.next_id.fetch_add(1, Ordering::SeqCst));
-	self.table_mut().entry(id).or_insert_with(move || {
+        self.table_mut().entry(id).or_insert_with(move || {
             SwapChain(Arc::new(Mutex::new(SwapChainData {
-	        id,
-	        size,
-	        context_id: ContextId::from(context),
+                id,
+                size,
+                context_id: ContextId::from(context),
                 unattached_front_buffer: None,
                 pending_surface: None,
                 presented_surfaces: Vec::new(),
-	    })))
-	});
-	id
+            })))
+        });
+        id
     }
 }
