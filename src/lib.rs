@@ -24,7 +24,11 @@ use surfman::Error;
 use surfman::Device;
 use surfman::Surface;
 
+#[cfg(feature = "serde")]
+use serde::{Deserialize, Serialize};
+
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct SwapChainId(pub usize);
 
 impl Display for SwapChainId {
@@ -34,6 +38,7 @@ impl Display for SwapChainId {
 }
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 struct ContextId(usize);
 
 impl<'a> From<&'a mut Context> for ContextId {
