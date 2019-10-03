@@ -92,7 +92,7 @@ impl SwapChainData {
     }
 
     fn take_surface(&mut self) -> Option<Surface> {
-        self.pending_surface.take()
+        self.pending_surface.take().or_else(|| self.presented_surfaces.pop())
     }
 
     fn recycle_surface(&mut self, surface: Surface) {
