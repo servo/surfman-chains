@@ -5,6 +5,7 @@
 use euclid::default::Size2D;
 
 use fnv::FnvHashMap;
+use fnv::FnvHashSet;
 
 use std::hash::Hash;
 use std::mem;
@@ -73,6 +74,18 @@ impl SwapChainData {
     fn recycle_surface(&mut self, surface: Surface) {
         self.presented_surfaces.push(surface)
     }
+
+    fn destroy(&mut self, device: &mut Device, context: &mut Context) {
+        let surfaces = self
+            .pending_surface
+            .take()
+            .into_iter()
+            .chain(self.unattached_front_buffer.take().into_iter())
+            .chain(self.presented_surfaces.drain(..));
+        for surface in surfaces {
+            device.destroy_surface(context, surface).unwrap();
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -94,18 +107,28 @@ impl SwapChain {
     pub fn recycle_surface(&self, surface: Surface) {
         self.lock().recycle_surface(surface)
     }
+
+    fn destroy(&self, device: &mut Device, context: &mut Context) {
+        self.lock().destroy(device, context);
+    }
 }
 
 #[derive(Clone, Default)]
 pub struct SwapChains<SwapChainID: Eq + Hash> {
+    ids: Arc<Mutex<FnvHashMap<ContextID, FnvHashSet<SwapChainID>>>>,
     table: Arc<RwLock<FnvHashMap<SwapChainID, SwapChain>>>,
 }
 
-impl<SwapChainID: Eq + Hash> SwapChains<SwapChainID> {
+impl<SwapChainID: Clone + Eq + Hash> SwapChains<SwapChainID> {
     pub fn new() -> SwapChains<SwapChainID> {
         SwapChains {
+            ids: Arc::new(Mutex::new(FnvHashMap::default())),
             table: Arc::new(RwLock::new(FnvHashMap::default())),
         }
+    }
+
+    fn ids(&self) -> MutexGuard<FnvHashMap<ContextID, FnvHashSet<SwapChainID>>> {
+        self.ids.lock().unwrap_or_else(|err| err.into_inner())
     }
 
     fn table(&self) -> RwLockReadGuard<FnvHashMap<SwapChainID, SwapChain>> {
@@ -133,6 +156,10 @@ impl<SwapChainID: Eq + Hash> SwapChains<SwapChainID> {
         device: &Device,
         context: &mut Context,
     ) -> SwapChain {
+        self.ids()
+            .entry(context.id())
+            .or_insert_with(Default::default)
+            .insert(id.clone());
         self.table_mut()
             .entry(id)
             .or_insert_with(move || {
@@ -155,6 +182,10 @@ impl<SwapChainID: Eq + Hash> SwapChains<SwapChainID> {
         context: &mut Context,
         size: Size2D<i32>,
     ) -> SwapChain {
+        self.ids()
+            .entry(context.id())
+            .or_insert_with(Default::default)
+            .insert(id.clone());
         self.table_mut()
             .entry(id)
             .or_insert_with(move || {
@@ -168,5 +199,19 @@ impl<SwapChainID: Eq + Hash> SwapChains<SwapChainID> {
                 })))
             })
             .clone()
+    }
+
+    pub fn destroy(&self, id: SwapChainID, device: &mut Device, context: &mut Context) {
+        if let Some(swap_chain) = self.table_mut().remove(&id) {
+            swap_chain.destroy(device, context);
+        }
+    }
+
+    pub fn destroy_all(&self, device: &mut Device, context: &mut Context) {
+        if let Some(mut ids) = self.ids().remove(&context.id()) {
+            for id in ids.drain() {
+                self.destroy(id, device, context);
+            }
+        }
     }
 }
