@@ -7,6 +7,7 @@ use euclid::default::Size2D;
 use fnv::FnvHashMap;
 use fnv::FnvHashSet;
 
+use std::collections::hash_map::Entry;
 use std::hash::Hash;
 use std::mem;
 use std::sync::Arc;
@@ -83,15 +84,20 @@ impl SwapChainData {
         Ok(())
     }
 
-    fn resize(&mut self, device: &mut Device, context: &mut Context, size: Size2D<i32>) -> Result<(), Error> {
+    fn resize(
+        &mut self,
+        device: &mut Device,
+        context: &mut Context,
+        size: Size2D<i32>,
+    ) -> Result<(), Error> {
         self.validate_context(context)?;
         if let Some(surface) = self.unattached_front_buffer.as_mut() {
             let new_surface = device.create_surface(context, &size)?;
-	    let old_surface = mem::replace(surface, new_surface);
+            let old_surface = mem::replace(surface, new_surface);
             device.destroy_surface(context, old_surface)?;
         }
-	self.size = size;
-	Ok(())
+        self.size = size;
+        Ok(())
     }
 
     fn take_surface(&mut self) -> Option<Surface> {
@@ -137,7 +143,12 @@ impl SwapChain {
         self.lock().detach(device, context)
     }
 
-    pub fn resize(&self, device: &mut Device, context: &mut Context, size: Size2D<i32>) -> Result<(), Error> {
+    pub fn resize(
+        &self,
+        device: &mut Device,
+        context: &mut Context,
+        size: Size2D<i32>,
+    ) -> Result<(), Error> {
         self.lock().resize(device, context, size)
     }
 
@@ -151,6 +162,32 @@ impl SwapChain {
 
     fn destroy(&self, device: &mut Device, context: &mut Context) {
         self.lock().destroy(device, context);
+    }
+
+    fn create_attached(device: &mut Device, context: &mut Context) -> Result<SwapChain, Error> {
+        let size = device.context_surface_size(context)?;
+        Ok(SwapChain(Arc::new(Mutex::new(SwapChainData {
+            size,
+            context_id: context.id(),
+            unattached_front_buffer: None,
+            pending_surface: None,
+            presented_surfaces: Vec::new(),
+        }))))
+    }
+
+    fn create_detached(
+        device: &mut Device,
+        context: &mut Context,
+        size: Size2D<i32>,
+    ) -> Result<SwapChain, Error> {
+        let surface = device.create_surface(context, &size)?;
+        Ok(SwapChain(Arc::new(Mutex::new(SwapChainData {
+            size,
+            context_id: context.id(),
+            unattached_front_buffer: Some(surface),
+            pending_surface: None,
+            presented_surfaces: Vec::new(),
+        }))))
     }
 }
 
@@ -184,62 +221,41 @@ impl<SwapChainID: Clone + Eq + Hash> SwapChains<SwapChainID> {
         self.table().get(&id).cloned()
     }
 
-    pub fn get_with<F, T>(&self, id: SwapChainID, f: F) -> Option<T>
-    where
-        F: Fn(&SwapChain) -> T,
-    {
-        self.table().get(&id).map(f)
-    }
-
-    pub fn get_or_default(
+    pub fn create_attached_swap_chain(
         &self,
         id: SwapChainID,
-        device: &Device,
+        device: &mut Device,
         context: &mut Context,
-    ) -> SwapChain {
+    ) -> Result<(), Error> {
+        match self.table_mut().entry(id.clone()) {
+            Entry::Occupied(_) => Err(Error::Failed)?,
+            Entry::Vacant(entry) => entry.insert(SwapChain::create_attached(device, context)?),
+        };
         self.ids()
             .entry(context.id())
             .or_insert_with(Default::default)
-            .insert(id.clone());
-        self.table_mut()
-            .entry(id)
-            .or_insert_with(move || {
-                let size = device.context_surface_size(context).unwrap();
-                SwapChain(Arc::new(Mutex::new(SwapChainData {
-                    size,
-                    context_id: context.id(),
-                    unattached_front_buffer: None,
-                    pending_surface: None,
-                    presented_surfaces: Vec::new(),
-                })))
-            })
-            .clone()
+            .insert(id);
+        Ok(())
     }
 
-    pub fn get_or_create(
+    pub fn create_detached_swap_chain(
         &self,
         id: SwapChainID,
         device: &mut Device,
         context: &mut Context,
         size: Size2D<i32>,
-    ) -> SwapChain {
+    ) -> Result<(), Error> {
+        match self.table_mut().entry(id.clone()) {
+            Entry::Occupied(_) => Err(Error::Failed)?,
+            Entry::Vacant(entry) => {
+                entry.insert(SwapChain::create_detached(device, context, size)?)
+            }
+        };
         self.ids()
             .entry(context.id())
             .or_insert_with(Default::default)
-            .insert(id.clone());
-        self.table_mut()
-            .entry(id)
-            .or_insert_with(move || {
-                let surface = device.create_surface(context, &size).unwrap();
-                SwapChain(Arc::new(Mutex::new(SwapChainData {
-                    size,
-                    context_id: context.id(),
-                    unattached_front_buffer: Some(surface),
-                    pending_surface: None,
-                    presented_surfaces: Vec::new(),
-                })))
-            })
-            .clone()
+            .insert(id);
+        Ok(())
     }
 
     pub fn destroy(&self, id: SwapChainID, device: &mut Device, context: &mut Context) {
