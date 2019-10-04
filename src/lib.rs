@@ -241,9 +241,9 @@ impl<SwapChainID: Clone + Eq + Hash> SwapChains<SwapChainID> {
     pub fn create_detached_swap_chain(
         &self,
         id: SwapChainID,
+        size: Size2D<i32>,
         device: &mut Device,
         context: &mut Context,
-        size: Size2D<i32>,
     ) -> Result<(), Error> {
         match self.table_mut().entry(id.clone()) {
             Entry::Occupied(_) => Err(Error::Failed)?,
