@@ -102,6 +102,12 @@ pub struct SwapChains<SwapChainID: Eq + Hash> {
 }
 
 impl<SwapChainID: Eq + Hash> SwapChains<SwapChainID> {
+    pub fn new() -> SwapChains<SwapChainID> {
+        SwapChains {
+            table: Arc::new(RwLock::new(FnvHashMap::default())),
+        }
+    }
+
     fn table(&self) -> RwLockReadGuard<FnvHashMap<SwapChainID, SwapChain>> {
         self.table.read().unwrap_or_else(|err| err.into_inner())
     }
