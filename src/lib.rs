@@ -65,6 +65,35 @@ impl SwapChainData {
         Ok(())
     }
 
+    fn attach(&mut self, device: &mut Device, context: &mut Context) -> Result<(), Error> {
+        self.validate_context(context)?;
+        if let Some(surface) = self.unattached_front_buffer.take() {
+            let surface = device.replace_context_surface(context, surface)?;
+            device.destroy_surface(context, surface)?;
+        }
+        Ok(())
+    }
+
+    fn detach(&mut self, device: &mut Device, context: &mut Context) -> Result<(), Error> {
+        self.validate_context(context)?;
+        if self.unattached_front_buffer.is_none() {
+            let surface = device.create_surface(context, &self.size)?;
+            self.unattached_front_buffer = Some(surface);
+        }
+        Ok(())
+    }
+
+    fn resize(&mut self, device: &mut Device, context: &mut Context, size: Size2D<i32>) -> Result<(), Error> {
+        self.validate_context(context)?;
+        if let Some(surface) = self.unattached_front_buffer.as_mut() {
+            let new_surface = device.create_surface(context, &size)?;
+	    let old_surface = mem::replace(surface, new_surface);
+            device.destroy_surface(context, old_surface)?;
+        }
+	self.size = size;
+	Ok(())
+    }
+
     fn take_surface(&mut self) -> Option<Surface> {
         self.pending_surface
             .take()
@@ -98,6 +127,18 @@ impl SwapChain {
 
     pub fn swap_buffers(&self, device: &mut Device, context: &mut Context) -> Result<(), Error> {
         self.lock().swap_buffers(device, context)
+    }
+
+    pub fn attach(&self, device: &mut Device, context: &mut Context) -> Result<(), Error> {
+        self.lock().attach(device, context)
+    }
+
+    pub fn detach(&self, device: &mut Device, context: &mut Context) -> Result<(), Error> {
+        self.lock().detach(device, context)
+    }
+
+    pub fn resize(&self, device: &mut Device, context: &mut Context, size: Size2D<i32>) -> Result<(), Error> {
+        self.lock().resize(device, context, size)
     }
 
     pub fn take_surface(&self) -> Option<Surface> {
