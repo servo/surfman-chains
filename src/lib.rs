@@ -6,12 +6,8 @@ use euclid::default::Size2D;
 
 use fnv::FnvHashMap;
 
-use std::fmt;
-use std::fmt::Display;
-use std::fmt::Formatter;
+use std::hash::Hash;
 use std::mem;
-use std::sync::atomic::AtomicUsize;
-use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::sync::Mutex;
 use std::sync::MutexGuard;
@@ -20,38 +16,14 @@ use std::sync::RwLockReadGuard;
 use std::sync::RwLockWriteGuard;
 
 use surfman::Context;
+use surfman::ContextID;
 use surfman::Device;
 use surfman::Error;
 use surfman::Surface;
 
-#[cfg(feature = "serde")]
-use serde::{Deserialize, Serialize};
-
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
-#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-pub struct SwapChainId(pub usize);
-
-impl Display for SwapChainId {
-    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
-        write!(f, "{:?}", *self)
-    }
-}
-
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
-#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-struct ContextId(usize);
-
-impl<'a> From<&'a mut Context> for ContextId {
-    fn from(context: &'a mut Context) -> ContextId {
-        // TODO: context ids shouldn't just be addresses
-        ContextId(context as *const Context as usize)
-    }
-}
-
 struct SwapChainData {
-    id: SwapChainId,
     size: Size2D<i32>,
-    context_id: ContextId,
+    context_id: ContextID,
     unattached_front_buffer: Option<Surface>,
     pending_surface: Option<Surface>,
     presented_surfaces: Vec<Surface>,
@@ -59,7 +31,7 @@ struct SwapChainData {
 
 impl SwapChainData {
     fn validate_context(&self, context: &mut Context) -> Result<(), Error> {
-        if self.context_id == ContextId::from(context) {
+        if self.context_id == context.id() {
             Ok(())
         } else {
             Err(Error::IncompatibleContext)
@@ -111,10 +83,6 @@ impl SwapChain {
         self.0.lock().unwrap_or_else(|err| err.into_inner())
     }
 
-    pub fn id(&self) -> SwapChainId {
-        self.lock().id
-    }
-
     pub fn swap_buffers(&self, device: &mut Device, context: &mut Context) -> Result<(), Error> {
         self.lock().swap_buffers(device, context)
     }
@@ -129,43 +97,53 @@ impl SwapChain {
 }
 
 #[derive(Clone, Default)]
-pub struct SwapChains {
-    next_id: Arc<AtomicUsize>,
-    table: Arc<RwLock<FnvHashMap<SwapChainId, SwapChain>>>,
+pub struct SwapChains<SwapChainID: Eq + Hash> {
+    table: Arc<RwLock<FnvHashMap<SwapChainID, SwapChain>>>,
 }
 
-impl SwapChains {
-    fn table(&self) -> RwLockReadGuard<FnvHashMap<SwapChainId, SwapChain>> {
+impl<SwapChainID: Eq + Hash> SwapChains<SwapChainID> {
+    fn table(&self) -> RwLockReadGuard<FnvHashMap<SwapChainID, SwapChain>> {
         self.table.read().unwrap_or_else(|err| err.into_inner())
     }
 
-    fn table_mut(&self) -> RwLockWriteGuard<FnvHashMap<SwapChainId, SwapChain>> {
+    fn table_mut(&self) -> RwLockWriteGuard<FnvHashMap<SwapChainID, SwapChain>> {
         self.table.write().unwrap_or_else(|err| err.into_inner())
     }
 
-    pub fn get(&self, id: SwapChainId) -> Option<SwapChain> {
+    pub fn get(&self, id: SwapChainID) -> Option<SwapChain> {
         self.table().get(&id).cloned()
     }
 
-    pub fn get_with<F, T>(&self, id: SwapChainId, f: F) -> Option<T>
+    pub fn get_with<F, T>(&self, id: SwapChainID, f: F) -> Option<T>
     where
         F: Fn(&SwapChain) -> T,
     {
         self.table().get(&id).map(f)
     }
 
-    pub fn create_swap_chain(&self, context: &mut Context, size: Size2D<i32>) -> SwapChainId {
-        let id = SwapChainId(self.next_id.fetch_add(1, Ordering::SeqCst));
+    pub fn get_or_default(&self, id: SwapChainID, device: &Device, context: &mut Context) -> SwapChain {
         self.table_mut().entry(id).or_insert_with(move || {
+	    let size = device.context_surface_size(context).unwrap();
             SwapChain(Arc::new(Mutex::new(SwapChainData {
-                id,
                 size,
-                context_id: ContextId::from(context),
+                context_id: context.id(),
                 unattached_front_buffer: None,
                 pending_surface: None,
                 presented_surfaces: Vec::new(),
             })))
-        });
-        id
+        }).clone()
+    }
+
+    pub fn get_or_create(&self, id: SwapChainID, device: &mut Device, context: &mut Context, size: Size2D<i32>) -> SwapChain {
+        self.table_mut().entry(id).or_insert_with(move || {
+	    let surface = device.create_surface(context, &size).unwrap();
+            SwapChain(Arc::new(Mutex::new(SwapChainData {
+                size,
+                context_id: context.id(),
+                unattached_front_buffer: Some(surface),
+                pending_surface: None,
+                presented_surfaces: Vec::new(),
+            })))
+        }).clone()
     }
 }
