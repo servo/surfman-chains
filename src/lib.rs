@@ -121,29 +121,46 @@ impl<SwapChainID: Eq + Hash> SwapChains<SwapChainID> {
         self.table().get(&id).map(f)
     }
 
-    pub fn get_or_default(&self, id: SwapChainID, device: &Device, context: &mut Context) -> SwapChain {
-        self.table_mut().entry(id).or_insert_with(move || {
-	    let size = device.context_surface_size(context).unwrap();
-            SwapChain(Arc::new(Mutex::new(SwapChainData {
-                size,
-                context_id: context.id(),
-                unattached_front_buffer: None,
-                pending_surface: None,
-                presented_surfaces: Vec::new(),
-            })))
-        }).clone()
+    pub fn get_or_default(
+        &self,
+        id: SwapChainID,
+        device: &Device,
+        context: &mut Context,
+    ) -> SwapChain {
+        self.table_mut()
+            .entry(id)
+            .or_insert_with(move || {
+                let size = device.context_surface_size(context).unwrap();
+                SwapChain(Arc::new(Mutex::new(SwapChainData {
+                    size,
+                    context_id: context.id(),
+                    unattached_front_buffer: None,
+                    pending_surface: None,
+                    presented_surfaces: Vec::new(),
+                })))
+            })
+            .clone()
     }
 
-    pub fn get_or_create(&self, id: SwapChainID, device: &mut Device, context: &mut Context, size: Size2D<i32>) -> SwapChain {
-        self.table_mut().entry(id).or_insert_with(move || {
-	    let surface = device.create_surface(context, &size).unwrap();
-            SwapChain(Arc::new(Mutex::new(SwapChainData {
-                size,
-                context_id: context.id(),
-                unattached_front_buffer: Some(surface),
-                pending_surface: None,
-                presented_surfaces: Vec::new(),
-            })))
-        }).clone()
+    pub fn get_or_create(
+        &self,
+        id: SwapChainID,
+        device: &mut Device,
+        context: &mut Context,
+        size: Size2D<i32>,
+    ) -> SwapChain {
+        self.table_mut()
+            .entry(id)
+            .or_insert_with(move || {
+                let surface = device.create_surface(context, &size).unwrap();
+                SwapChain(Arc::new(Mutex::new(SwapChainData {
+                    size,
+                    context_id: context.id(),
+                    unattached_front_buffer: Some(surface),
+                    pending_surface: None,
+                    presented_surfaces: Vec::new(),
+                })))
+            })
+            .clone()
     }
 }
