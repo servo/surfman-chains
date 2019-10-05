@@ -9,5 +9,4 @@ license = "MPL-2.0"
 [dependencies]
 euclid = "0.20"
 fnv = "1.0"
-# surfman = { git = "https://github.com/pcwalton/surfman" }
-surfman = { git = "https://github.com/asajeffrey/surfman" }
+surfman = { git = "https://github.com/pcwalton/surfman" }
