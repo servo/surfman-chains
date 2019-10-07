@@ -7,6 +7,8 @@ use euclid::default::Size2D;
 use fnv::FnvHashMap;
 use fnv::FnvHashSet;
 
+use log::debug;
+
 use std::collections::hash_map::Entry;
 use std::hash::Hash;
 use std::mem;
@@ -41,25 +43,57 @@ impl SwapChainData {
     }
 
     fn swap_buffers(&mut self, device: &mut Device, context: &mut Context) -> Result<(), Error> {
+        debug!("Swap buffers on context {:?}", self.context_id);
         self.validate_context(context)?;
+
+        // Recycle the old front buffer
+        if let Some(old_front_buffer) = self.pending_surface.take() {
+            debug!(
+                "Recycling surface {:?} ({:?}) for context {:?}",
+                old_front_buffer.id(),
+                old_front_buffer.size(),
+                self.context_id
+            );
+            self.recycle_surface(old_front_buffer);
+        }
 
         // Fetch a new back buffer, recycling presented buffers if possible.
         let new_back_buffer = self
             .presented_surfaces
             .iter()
             .position(|surface| surface.size() == self.size)
-            .map(|index| Ok(self.presented_surfaces.swap_remove(index)))
-            .unwrap_or_else(|| device.create_surface(context, &self.size))?;
+            .map(|index| {
+                debug!("Recyling surface for context {:?}", self.context_id);
+                Ok(self.presented_surfaces.swap_remove(index))
+            })
+            .unwrap_or_else(|| {
+                debug!(
+                    "Creating a new surface ({:?}) for context {:?}",
+                    self.size, self.context_id
+                );
+                device.create_surface(context, &self.size)
+            })?;
 
         // Swap the buffers
+        debug!(
+            "Surface {:?} is the new back buffer for context {:?}",
+            new_back_buffer.id(),
+            self.context_id
+        );
         let new_front_buffer = match self.unattached_front_buffer.as_mut() {
             Some(surface) => mem::replace(surface, new_back_buffer),
             None => device.replace_context_surface(context, new_back_buffer)?,
         };
 
-        // Updata the state
+        // Update the state
+        debug!(
+            "Surface {:?} is the new front buffer for context {:?}",
+            new_front_buffer.id(),
+            self.context_id
+        );
         self.pending_surface = Some(new_front_buffer);
         for surface in self.presented_surfaces.drain(..) {
+            debug!("Destroying a surface for context {:?}", self.context_id);
             device.destroy_surface(context, surface)?;
         }
 
@@ -90,12 +124,19 @@ impl SwapChainData {
         context: &mut Context,
         size: Size2D<i32>,
     ) -> Result<(), Error> {
+        debug!("Resizing context {:?} to {:?}", context.id(), size);
         self.validate_context(context)?;
-        if let Some(surface) = self.unattached_front_buffer.as_mut() {
-            let new_surface = device.create_surface(context, &size)?;
-            let old_surface = mem::replace(surface, new_surface);
-            device.destroy_surface(context, old_surface)?;
-        }
+        let new_back_buffer = device.create_surface(context, &size)?;
+        debug!(
+            "Surface {:?} is the new back buffer for context {:?}",
+            new_back_buffer.id(),
+            self.context_id
+        );
+        let old_back_buffer = match self.unattached_front_buffer.as_mut() {
+            Some(surface) => mem::replace(surface, new_back_buffer),
+            None => device.replace_context_surface(context, new_back_buffer)?,
+        };
+        device.destroy_surface(context, old_back_buffer)?;
         self.size = size;
         Ok(())
     }
