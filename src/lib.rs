@@ -10,6 +10,7 @@ use fnv::FnvHashSet;
 use log::debug;
 
 use std::collections::hash_map::Entry;
+use std::fmt::Debug;
 use std::hash::Hash;
 use std::mem;
 use std::sync::Arc;
@@ -102,23 +103,26 @@ impl SwapChainData {
         Ok(())
     }
 
-    fn attach(&mut self, device: &mut Device, context: &mut Context) -> Result<(), Error> {
+    fn take_attachment_from(
+        &mut self,
+        device: &mut Device,
+        context: &mut Context,
+        other: &mut SwapChainData,
+    ) -> Result<(), Error> {
         self.validate_context(context)?;
-        if let Some(surface) = self.unattached_front_buffer.take() {
+        other.validate_context(context)?;
+        if let (Some(surface), true) = (
+            self.unattached_front_buffer.take(),
+            other.unattached_front_buffer.is_none(),
+        ) {
+            debug!("Attaching surface {:?}", surface.id());
             let surface = device.replace_context_surface(context, surface)?;
-            device.destroy_surface(context, surface)?;
+            debug!("Detaching surface {:?}", surface.id());
+            other.unattached_front_buffer = Some(surface);
+            Ok(())
+        } else {
+            Err(Error::Failed)
         }
-        Ok(())
-    }
-
-    fn detach(&mut self, device: &mut Device, context: &mut Context) -> Result<(), Error> {
-        self.validate_context(context)?;
-        if self.unattached_front_buffer.is_none() {
-            let surface_type = SurfaceType::Generic { size: self.size };
-            let surface = device.create_surface(context, &surface_type)?;
-            self.unattached_front_buffer = Some(surface);
-        }
-        Ok(())
     }
 
     fn resize(
@@ -180,12 +184,14 @@ impl SwapChain {
         self.lock().swap_buffers(device, context)
     }
 
-    pub fn attach(&self, device: &mut Device, context: &mut Context) -> Result<(), Error> {
-        self.lock().attach(device, context)
-    }
-
-    pub fn detach(&self, device: &mut Device, context: &mut Context) -> Result<(), Error> {
-        self.lock().detach(device, context)
+    pub fn take_attachment_from(
+        &self,
+        device: &mut Device,
+        context: &mut Context,
+        other: &SwapChain,
+    ) -> Result<(), Error> {
+        self.lock()
+            .take_attachment_from(device, context, &mut *other.lock())
     }
 
     pub fn resize(
@@ -243,7 +249,7 @@ pub struct SwapChains<SwapChainID: Eq + Hash> {
     table: Arc<RwLock<FnvHashMap<SwapChainID, SwapChain>>>,
 }
 
-impl<SwapChainID: Clone + Eq + Hash> SwapChains<SwapChainID> {
+impl<SwapChainID: Clone + Eq + Hash + Debug> SwapChains<SwapChainID> {
     pub fn new() -> SwapChains<SwapChainID> {
         SwapChains {
             ids: Arc::new(Mutex::new(FnvHashMap::default())),
@@ -264,6 +270,7 @@ impl<SwapChainID: Clone + Eq + Hash> SwapChains<SwapChainID> {
     }
 
     pub fn get(&self, id: SwapChainID) -> Option<SwapChain> {
+        debug!("Getting swap chain {:?}", id);
         self.table().get(&id).cloned()
     }
 
