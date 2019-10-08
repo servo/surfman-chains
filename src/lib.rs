@@ -24,6 +24,7 @@ use surfman::ContextID;
 use surfman::Device;
 use surfman::Error;
 use surfman::Surface;
+use surfman::SurfaceType;
 
 struct SwapChainData {
     size: Size2D<i32>,
@@ -71,7 +72,8 @@ impl SwapChainData {
                     "Creating a new surface ({:?}) for context {:?}",
                     self.size, self.context_id
                 );
-                device.create_surface(context, &self.size)
+                let surface_type = SurfaceType::Generic { size: self.size };
+                device.create_surface(context, &surface_type)
             })?;
 
         // Swap the buffers
@@ -112,7 +114,8 @@ impl SwapChainData {
     fn detach(&mut self, device: &mut Device, context: &mut Context) -> Result<(), Error> {
         self.validate_context(context)?;
         if self.unattached_front_buffer.is_none() {
-            let surface = device.create_surface(context, &self.size)?;
+            let surface_type = SurfaceType::Generic { size: self.size };
+            let surface = device.create_surface(context, &surface_type)?;
             self.unattached_front_buffer = Some(surface);
         }
         Ok(())
@@ -126,7 +129,8 @@ impl SwapChainData {
     ) -> Result<(), Error> {
         debug!("Resizing context {:?} to {:?}", context.id(), size);
         self.validate_context(context)?;
-        let new_back_buffer = device.create_surface(context, &size)?;
+        let surface_type = SurfaceType::Generic { size };
+        let new_back_buffer = device.create_surface(context, &surface_type)?;
         debug!(
             "Surface {:?} is the new back buffer for context {:?}",
             new_back_buffer.id(),
@@ -221,7 +225,8 @@ impl SwapChain {
         context: &mut Context,
         size: Size2D<i32>,
     ) -> Result<SwapChain, Error> {
-        let surface = device.create_surface(context, &size)?;
+        let surface_type = SurfaceType::Generic { size };
+        let surface = device.create_surface(context, &surface_type)?;
         Ok(SwapChain(Arc::new(Mutex::new(SwapChainData {
             size,
             context_id: context.id(),
