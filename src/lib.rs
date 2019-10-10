@@ -84,8 +84,14 @@ impl SwapChainData {
             self.context_id
         );
         let new_front_buffer = match self.unattached_front_buffer.as_mut() {
-            Some(surface) => mem::replace(surface, new_back_buffer),
-            None => device.replace_context_surface(context, new_back_buffer)?,
+            Some(surface) => {
+                debug!("Replacing unattached surface");
+                mem::replace(surface, new_back_buffer)
+            }
+            None => {
+                debug!("Replacing attached surface");
+                device.replace_context_surface(context, new_back_buffer)?
+            }
         };
 
         // Update the state
@@ -209,6 +215,10 @@ impl SwapChain {
 
     pub fn recycle_surface(&self, surface: Surface) {
         self.lock().recycle_surface(surface)
+    }
+
+    pub fn is_attached(&self) -> bool {
+        self.lock().unattached_front_buffer.is_none()
     }
 
     fn destroy(&self, device: &mut Device, context: &mut Context) {
