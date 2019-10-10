@@ -334,4 +334,18 @@ impl<SwapChainID: Clone + Eq + Hash + Debug> SwapChains<SwapChainID> {
             }
         }
     }
+
+    pub fn iter(
+        &self,
+        _: &mut Device,
+        context: &mut Context,
+    ) -> impl Iterator<Item = (SwapChainID, SwapChain)> {
+        self.ids()
+            .get(&context.id())
+            .iter()
+            .flat_map(|ids| ids.iter())
+            .filter_map(|id| Some((id.clone(), self.table().get(id)?.clone())))
+            .collect::<Vec<_>>()
+            .into_iter()
+    }
 }
