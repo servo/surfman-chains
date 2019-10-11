@@ -2,6 +2,24 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
 
+//! An implementation of thread-safe swap chains for the `surfman` surface manager.
+//!
+//! The role of a swap chain is to allow surfaces to be communicated between contexts,
+//! often in different threads. Each swap chain has a *producer* context,
+//! responsible for creating and destroying surfaces, and a number of *consumer* contexts,
+//! (usually just one) which take surfaces from the swap chain, and return them for recycling.
+//!
+//! Each swap chain has a *back buffer*, that is the current surface that the producer context may draw to.
+//! Each swap chain has a *front buffer*, that is the most recent surface the producer context finished drawing to.
+//!
+//! The producer may *swap* these buffers when it has finished drawing and has a surface ready to display.
+//!
+//! The consumer may *take* the front buffer, display it, then *recycle* it.
+//!
+//! Each producer context has one *attached* swap chain, whose back buffer is the current surface of the context.
+//! The producer may change the attached swap chain, attaching a currently unattached swap chain,
+//! and detatching the currently attached one.
+
 use euclid::default::Size2D;
 
 use fnv::FnvHashMap;
@@ -27,15 +45,24 @@ use surfman::Error;
 use surfman::Surface;
 use surfman::SurfaceType;
 
+// The data stored for each swap chain.
 struct SwapChainData {
+    // The size of the back buffer
     size: Size2D<i32>,
+    // The id of the producer context
     context_id: ContextID,
-    unattached_front_buffer: Option<Surface>,
+    // The back buffer of the swap chain.
+    // Some if this swap chain is unattached,
+    // None if it is attached (and so the context owns the surface).
+    unattached_surface: Option<Surface>,
+    // Some if the producing context has finished drawing a new front buffer, ready to be displayed.
     pending_surface: Option<Surface>,
-    presented_surfaces: Vec<Surface>,
+    // All of the surfaces that have already been displayed, ready to be recycled.
+    recycled_surfaces: Vec<Surface>,
 }
 
 impl SwapChainData {
+    // Returns `Ok` if `context` is the producer context for this swap chain.
     fn validate_context(&self, context: &mut Context) -> Result<(), Error> {
         if self.context_id == context.id() {
             Ok(())
@@ -44,6 +71,9 @@ impl SwapChainData {
         }
     }
 
+    // Swap the back and front buffers.
+    // Called by the producer.
+    // Returns an error if `context` is not the prodcer context for this swap chain.
     fn swap_buffers(&mut self, device: &mut Device, context: &mut Context) -> Result<(), Error> {
         debug!("Swap buffers on context {:?}", self.context_id);
         self.validate_context(context)?;
@@ -61,12 +91,12 @@ impl SwapChainData {
 
         // Fetch a new back buffer, recycling presented buffers if possible.
         let new_back_buffer = self
-            .presented_surfaces
+            .recycled_surfaces
             .iter()
             .position(|surface| surface.size() == self.size)
             .map(|index| {
                 debug!("Recyling surface for context {:?}", self.context_id);
-                Ok(self.presented_surfaces.swap_remove(index))
+                Ok(self.recycled_surfaces.swap_remove(index))
             })
             .unwrap_or_else(|| {
                 debug!(
@@ -83,7 +113,7 @@ impl SwapChainData {
             new_back_buffer.id(),
             self.context_id
         );
-        let new_front_buffer = match self.unattached_front_buffer.as_mut() {
+        let new_front_buffer = match self.unattached_surface.as_mut() {
             Some(surface) => {
                 debug!("Replacing unattached surface");
                 mem::replace(surface, new_back_buffer)
@@ -101,7 +131,7 @@ impl SwapChainData {
             self.context_id
         );
         self.pending_surface = Some(new_front_buffer);
-        for surface in self.presented_surfaces.drain(..) {
+        for surface in self.recycled_surfaces.drain(..) {
             debug!("Destroying a surface for context {:?}", self.context_id);
             device.destroy_surface(context, surface)?;
         }
@@ -109,6 +139,10 @@ impl SwapChainData {
         Ok(())
     }
 
+    // Swap the attached swap chain.
+    // Called by the producer.
+    // Returns an error if `context` is not the prodcer context for both swap chains.
+    // Returns an error if this swap chain is attached, or the other swap chain is detached.
     fn take_attachment_from(
         &mut self,
         device: &mut Device,
@@ -118,19 +152,24 @@ impl SwapChainData {
         self.validate_context(context)?;
         other.validate_context(context)?;
         if let (Some(surface), true) = (
-            self.unattached_front_buffer.take(),
-            other.unattached_front_buffer.is_none(),
+            self.unattached_surface.take(),
+            other.unattached_surface.is_none(),
         ) {
             debug!("Attaching surface {:?}", surface.id());
             let surface = device.replace_context_surface(context, surface)?;
             debug!("Detaching surface {:?}", surface.id());
-            other.unattached_front_buffer = Some(surface);
+            other.unattached_surface = Some(surface);
             Ok(())
         } else {
             Err(Error::Failed)
         }
     }
 
+    // Resize the swap chain.
+    // This creates a new back buffer of the appropriate size,
+    // and destroys the old one.
+    // Called by the producer.
+    // Returns an error if `context` is not the prodcer context for this swap chain.
     fn resize(
         &mut self,
         device: &mut Device,
@@ -146,7 +185,7 @@ impl SwapChainData {
             new_back_buffer.id(),
             self.context_id
         );
-        let old_back_buffer = match self.unattached_front_buffer.as_mut() {
+        let old_back_buffer = match self.unattached_surface.as_mut() {
             Some(surface) => mem::replace(surface, new_back_buffer),
             None => device.replace_context_surface(context, new_back_buffer)?,
         };
@@ -155,41 +194,59 @@ impl SwapChainData {
         Ok(())
     }
 
+    // Take the current front buffer.
+    // Called by a consumer.
     fn take_surface(&mut self) -> Option<Surface> {
         self.pending_surface
             .take()
-            .or_else(|| self.presented_surfaces.pop())
+            .or_else(|| self.recycled_surfaces.pop())
     }
 
+    // Recycle the current front buffer.
+    // Called by a consumer.
     fn recycle_surface(&mut self, surface: Surface) {
-        self.presented_surfaces.push(surface)
+        self.recycled_surfaces.push(surface)
     }
 
-    fn destroy(&mut self, device: &mut Device, context: &mut Context) {
+    // Destroy the swap chain.
+    // Called by the producer.
+    // Returns an error if `context` is not the prodcer context for this swap chain.
+    fn destroy(&mut self, device: &mut Device, context: &mut Context) -> Result<(), Error> {
+        self.validate_context(context)?;
         let surfaces = self
             .pending_surface
             .take()
             .into_iter()
-            .chain(self.unattached_front_buffer.take().into_iter())
-            .chain(self.presented_surfaces.drain(..));
+            .chain(self.unattached_surface.take().into_iter())
+            .chain(self.recycled_surfaces.drain(..));
         for surface in surfaces {
-            device.destroy_surface(context, surface).unwrap();
+            device.destroy_surface(context, surface)?;
         }
+        Ok(())
     }
 }
 
+/// A thread-safe swap chain.
 #[derive(Clone)]
 pub struct SwapChain(Arc<Mutex<SwapChainData>>);
 
 impl SwapChain {
+    // Guarantee unique access to the swap chain data
     fn lock(&self) -> MutexGuard<SwapChainData> {
         self.0.lock().unwrap_or_else(|err| err.into_inner())
     }
 
+    /// Swap the back and front buffers.
+    /// Called by the producer.
+    /// Returns an error if `context` is not the prodcer context for this swap chain.
     pub fn swap_buffers(&self, device: &mut Device, context: &mut Context) -> Result<(), Error> {
         self.lock().swap_buffers(device, context)
     }
 
+    /// Swap the attached swap chain.
+    /// Called by the producer.
+    /// Returns an error if `context` is not the prodcer context for both swap chains.
+    /// Returns an error if this swap chain is attached, or the other swap chain is detached.
     pub fn take_attachment_from(
         &self,
         device: &mut Device,
@@ -200,6 +257,11 @@ impl SwapChain {
             .take_attachment_from(device, context, &mut *other.lock())
     }
 
+    /// Resize the swap chain.
+    /// This creates a new back buffer of the appropriate size,
+    /// and destroys the old one.
+    /// Called by the producer.
+    /// Returns an error if `context` is not the prodcer context for this swap chain.
     pub fn resize(
         &self,
         device: &mut Device,
@@ -209,34 +271,44 @@ impl SwapChain {
         self.lock().resize(device, context, size)
     }
 
+    /// Take the current front buffer.
+    /// Called by a consumer.
     pub fn take_surface(&self) -> Option<Surface> {
         self.lock().take_surface()
     }
 
+    /// Recycle the current front buffer.
+    /// Called by a consumer.
     pub fn recycle_surface(&self, surface: Surface) {
         self.lock().recycle_surface(surface)
     }
 
+    /// Is this the attached swap chain?
     pub fn is_attached(&self) -> bool {
-        self.lock().unattached_front_buffer.is_none()
+        self.lock().unattached_surface.is_none()
     }
 
-    fn destroy(&self, device: &mut Device, context: &mut Context) {
-        self.lock().destroy(device, context);
+    /// Destroy the swap chain.
+    /// Called by the producer.
+    /// Returns an error if `context` is not the prodcer context for this swap chain.
+    pub fn destroy(&self, device: &mut Device, context: &mut Context) -> Result<(), Error> {
+        self.lock().destroy(device, context)
     }
 
-    fn create_attached(device: &mut Device, context: &mut Context) -> Result<SwapChain, Error> {
+    /// Create a new attached swap chain
+    pub fn create_attached(device: &mut Device, context: &mut Context) -> Result<SwapChain, Error> {
         let size = device.context_surface_size(context)?;
         Ok(SwapChain(Arc::new(Mutex::new(SwapChainData {
             size,
             context_id: context.id(),
-            unattached_front_buffer: None,
+            unattached_surface: None,
             pending_surface: None,
-            presented_surfaces: Vec::new(),
+            recycled_surfaces: Vec::new(),
         }))))
     }
 
-    fn create_detached(
+    /// Create a new detached swap chain
+    pub fn create_detached(
         device: &mut Device,
         context: &mut Context,
         size: Size2D<i32>,
@@ -246,20 +318,24 @@ impl SwapChain {
         Ok(SwapChain(Arc::new(Mutex::new(SwapChainData {
             size,
             context_id: context.id(),
-            unattached_front_buffer: Some(surface),
+            unattached_surface: Some(surface),
             pending_surface: None,
-            presented_surfaces: Vec::new(),
+            recycled_surfaces: Vec::new(),
         }))))
     }
 }
 
+/// A thread-safe collection of swap chains.
 #[derive(Clone, Default)]
 pub struct SwapChains<SwapChainID: Eq + Hash> {
+    // The swap chain ids, indexed by context id
     ids: Arc<Mutex<FnvHashMap<ContextID, FnvHashSet<SwapChainID>>>>,
+    // The swap chains, indexed by swap chain id
     table: Arc<RwLock<FnvHashMap<SwapChainID, SwapChain>>>,
 }
 
 impl<SwapChainID: Clone + Eq + Hash + Debug> SwapChains<SwapChainID> {
+    /// Create a new collection.
     pub fn new() -> SwapChains<SwapChainID> {
         SwapChains {
             ids: Arc::new(Mutex::new(FnvHashMap::default())),
@@ -267,23 +343,29 @@ impl<SwapChainID: Clone + Eq + Hash + Debug> SwapChains<SwapChainID> {
         }
     }
 
+    // Lock the ids
     fn ids(&self) -> MutexGuard<FnvHashMap<ContextID, FnvHashSet<SwapChainID>>> {
         self.ids.lock().unwrap_or_else(|err| err.into_inner())
     }
 
+    // Lock the lookup table
     fn table(&self) -> RwLockReadGuard<FnvHashMap<SwapChainID, SwapChain>> {
         self.table.read().unwrap_or_else(|err| err.into_inner())
     }
 
+    // Lock the lookup table for writing
     fn table_mut(&self) -> RwLockWriteGuard<FnvHashMap<SwapChainID, SwapChain>> {
         self.table.write().unwrap_or_else(|err| err.into_inner())
     }
 
+    /// Get a swap chain
     pub fn get(&self, id: SwapChainID) -> Option<SwapChain> {
         debug!("Getting swap chain {:?}", id);
         self.table().get(&id).cloned()
     }
 
+    /// Create a new attached swap chain and insert it in the table.
+    /// Returns an error if the `id` is already in the table.
     pub fn create_attached_swap_chain(
         &self,
         id: SwapChainID,
@@ -301,6 +383,8 @@ impl<SwapChainID: Clone + Eq + Hash + Debug> SwapChains<SwapChainID> {
         Ok(())
     }
 
+    /// Create a new dettached swap chain and insert it in the table.
+    /// Returns an error if the `id` is already in the table.
     pub fn create_detached_swap_chain(
         &self,
         id: SwapChainID,
@@ -321,20 +405,39 @@ impl<SwapChainID: Clone + Eq + Hash + Debug> SwapChains<SwapChainID> {
         Ok(())
     }
 
-    pub fn destroy(&self, id: SwapChainID, device: &mut Device, context: &mut Context) {
+    /// Destroy a swap chain.
+    /// Called by the producer.
+    /// Returns an error if `context` is not the prodcer context for the swap chain.
+    pub fn destroy(
+        &self,
+        id: SwapChainID,
+        device: &mut Device,
+        context: &mut Context,
+    ) -> Result<(), Error> {
         if let Some(swap_chain) = self.table_mut().remove(&id) {
-            swap_chain.destroy(device, context);
+            swap_chain.destroy(device, context)?;
         }
+        if let Some(ids) = self.ids().get_mut(&context.id()) {
+            ids.remove(&id);
+        }
+        Ok(())
     }
 
-    pub fn destroy_all(&self, device: &mut Device, context: &mut Context) {
+    /// Destroy all the swap chains for a particular producer context.
+    /// Called by the producer.
+    pub fn destroy_all(&self, device: &mut Device, context: &mut Context) -> Result<(), Error> {
         if let Some(mut ids) = self.ids().remove(&context.id()) {
             for id in ids.drain() {
-                self.destroy(id, device, context);
+                if let Some(swap_chain) = self.table_mut().remove(&id) {
+                    swap_chain.destroy(device, context)?;
+                }
             }
         }
+        Ok(())
     }
 
+    /// Iterate over all the swap chains for a particular producer context.
+    /// Called by the producer.
     pub fn iter(
         &self,
         _: &mut Device,
