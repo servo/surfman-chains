@@ -1,0 +1,1 @@
+initSidebarItems({"mod":[["adapter","A wrapper for Core OpenGL adapters."],["context","Wrapper for Core OpenGL contexts."],["device","A handle to the device. (This is a no-op, because handles are implicit in Apple's Core OpenGL.)"],["surface","Surface management for macOS."]]});

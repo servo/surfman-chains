@@ -1,0 +1,1 @@
+initSidebarItems({"trait":[["Leak","Leak a piece of data by never calling its destructor"]]});
