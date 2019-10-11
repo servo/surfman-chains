@@ -349,10 +349,131 @@
 <span id="349">349</span>
 <span id="350">350</span>
 <span id="351">351</span>
+<span id="352">352</span>
+<span id="353">353</span>
+<span id="354">354</span>
+<span id="355">355</span>
+<span id="356">356</span>
+<span id="357">357</span>
+<span id="358">358</span>
+<span id="359">359</span>
+<span id="360">360</span>
+<span id="361">361</span>
+<span id="362">362</span>
+<span id="363">363</span>
+<span id="364">364</span>
+<span id="365">365</span>
+<span id="366">366</span>
+<span id="367">367</span>
+<span id="368">368</span>
+<span id="369">369</span>
+<span id="370">370</span>
+<span id="371">371</span>
+<span id="372">372</span>
+<span id="373">373</span>
+<span id="374">374</span>
+<span id="375">375</span>
+<span id="376">376</span>
+<span id="377">377</span>
+<span id="378">378</span>
+<span id="379">379</span>
+<span id="380">380</span>
+<span id="381">381</span>
+<span id="382">382</span>
+<span id="383">383</span>
+<span id="384">384</span>
+<span id="385">385</span>
+<span id="386">386</span>
+<span id="387">387</span>
+<span id="388">388</span>
+<span id="389">389</span>
+<span id="390">390</span>
+<span id="391">391</span>
+<span id="392">392</span>
+<span id="393">393</span>
+<span id="394">394</span>
+<span id="395">395</span>
+<span id="396">396</span>
+<span id="397">397</span>
+<span id="398">398</span>
+<span id="399">399</span>
+<span id="400">400</span>
+<span id="401">401</span>
+<span id="402">402</span>
+<span id="403">403</span>
+<span id="404">404</span>
+<span id="405">405</span>
+<span id="406">406</span>
+<span id="407">407</span>
+<span id="408">408</span>
+<span id="409">409</span>
+<span id="410">410</span>
+<span id="411">411</span>
+<span id="412">412</span>
+<span id="413">413</span>
+<span id="414">414</span>
+<span id="415">415</span>
+<span id="416">416</span>
+<span id="417">417</span>
+<span id="418">418</span>
+<span id="419">419</span>
+<span id="420">420</span>
+<span id="421">421</span>
+<span id="422">422</span>
+<span id="423">423</span>
+<span id="424">424</span>
+<span id="425">425</span>
+<span id="426">426</span>
+<span id="427">427</span>
+<span id="428">428</span>
+<span id="429">429</span>
+<span id="430">430</span>
+<span id="431">431</span>
+<span id="432">432</span>
+<span id="433">433</span>
+<span id="434">434</span>
+<span id="435">435</span>
+<span id="436">436</span>
+<span id="437">437</span>
+<span id="438">438</span>
+<span id="439">439</span>
+<span id="440">440</span>
+<span id="441">441</span>
+<span id="442">442</span>
+<span id="443">443</span>
+<span id="444">444</span>
+<span id="445">445</span>
+<span id="446">446</span>
+<span id="447">447</span>
+<span id="448">448</span>
+<span id="449">449</span>
+<span id="450">450</span>
+<span id="451">451</span>
+<span id="452">452</span>
+<span id="453">453</span>
+<span id="454">454</span>
 </pre><div class="example-wrap"><pre class="rust ">
 <span class="comment">/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at https://mozilla.org/MPL/2.0/. */</span>
+
+<span class="doccomment">//! An implementation of thread-safe swap chains for the `surfman` surface manager.</span>
+<span class="doccomment">//!</span>
+<span class="doccomment">//! The role of a swap chain is to allow surfaces to be communicated between contexts,</span>
+<span class="doccomment">//! often in different threads. Each swap chain has a *producer* context,</span>
+<span class="doccomment">//! responsible for creating and destroying surfaces, and a number of *consumer* contexts,</span>
+<span class="doccomment">//! (usually just one) which take surfaces from the swap chain, and return them for recycling.</span>
+<span class="doccomment">//!</span>
+<span class="doccomment">//! Each swap chain has a *back buffer*, that is the current surface that the producer context may draw to.</span>
+<span class="doccomment">//! Each swap chain has a *front buffer*, that is the most recent surface the producer context finished drawing to.</span>
+<span class="doccomment">//!</span>
+<span class="doccomment">//! The producer may *swap* these buffers when it has finished drawing and has a surface ready to display.</span>
+<span class="doccomment">//!</span>
+<span class="doccomment">//! The consumer may *take* the front buffer, display it, then *recycle* it.</span>
+<span class="doccomment">//!</span>
+<span class="doccomment">//! Each producer context has one *attached* swap chain, whose back buffer is the current surface of the context.</span>
+<span class="doccomment">//! The producer may change the attached swap chain, attaching a currently unattached swap chain,</span>
+<span class="doccomment">//! and detatching the currently attached one.</span>
 
 <span class="kw">use</span> <span class="ident">euclid</span>::<span class="ident">default</span>::<span class="ident">Size2D</span>;
 
@@ -379,15 +500,24 @@
 <span class="kw">use</span> <span class="ident">surfman</span>::<span class="ident">Surface</span>;
 <span class="kw">use</span> <span class="ident">surfman</span>::<span class="ident">SurfaceType</span>;
 
+<span class="comment">// The data stored for each swap chain.</span>
 <span class="kw">struct</span> <span class="ident">SwapChainData</span> {
+    <span class="comment">// The size of the back buffer</span>
     <span class="ident">size</span>: <span class="ident">Size2D</span><span class="op">&lt;</span><span class="ident">i32</span><span class="op">&gt;</span>,
+    <span class="comment">// The id of the producer context</span>
     <span class="ident">context_id</span>: <span class="ident">ContextID</span>,
-    <span class="ident">unattached_front_buffer</span>: <span class="prelude-ty">Option</span><span class="op">&lt;</span><span class="ident">Surface</span><span class="op">&gt;</span>,
+    <span class="comment">// The back buffer of the swap chain.</span>
+    <span class="comment">// Some if this swap chain is unattached,</span>
+    <span class="comment">// None if it is attached (and so the context owns the surface).</span>
+    <span class="ident">unattached_surface</span>: <span class="prelude-ty">Option</span><span class="op">&lt;</span><span class="ident">Surface</span><span class="op">&gt;</span>,
+    <span class="comment">// Some if the producing context has finished drawing a new front buffer, ready to be displayed.</span>
     <span class="ident">pending_surface</span>: <span class="prelude-ty">Option</span><span class="op">&lt;</span><span class="ident">Surface</span><span class="op">&gt;</span>,
-    <span class="ident">presented_surfaces</span>: <span class="ident">Vec</span><span class="op">&lt;</span><span class="ident">Surface</span><span class="op">&gt;</span>,
+    <span class="comment">// All of the surfaces that have already been displayed, ready to be recycled.</span>
+    <span class="ident">recycled_surfaces</span>: <span class="ident">Vec</span><span class="op">&lt;</span><span class="ident">Surface</span><span class="op">&gt;</span>,
 }
 
 <span class="kw">impl</span> <span class="ident">SwapChainData</span> {
+    <span class="comment">// Returns `Ok` if `context` is the producer context for this swap chain.</span>
     <span class="kw">fn</span> <span class="ident">validate_context</span>(<span class="kw-2">&amp;</span><span class="self">self</span>, <span class="ident">context</span>: <span class="kw-2">&amp;</span><span class="kw-2">mut</span> <span class="ident">Context</span>) <span class="op">-&gt;</span> <span class="prelude-ty">Result</span><span class="op">&lt;</span>(), <span class="ident">Error</span><span class="op">&gt;</span> {
         <span class="kw">if</span> <span class="self">self</span>.<span class="ident">context_id</span> <span class="op">==</span> <span class="ident">context</span>.<span class="ident">id</span>() {
             <span class="prelude-val">Ok</span>(())
@@ -396,6 +526,9 @@
         }
     }
 
+    <span class="comment">// Swap the back and front buffers.</span>
+    <span class="comment">// Called by the producer.</span>
+    <span class="comment">// Returns an error if `context` is not the prodcer context for this swap chain.</span>
     <span class="kw">fn</span> <span class="ident">swap_buffers</span>(<span class="kw-2">&amp;</span><span class="kw-2">mut</span> <span class="self">self</span>, <span class="ident">device</span>: <span class="kw-2">&amp;</span><span class="kw-2">mut</span> <span class="ident">Device</span>, <span class="ident">context</span>: <span class="kw-2">&amp;</span><span class="kw-2">mut</span> <span class="ident">Context</span>) <span class="op">-&gt;</span> <span class="prelude-ty">Result</span><span class="op">&lt;</span>(), <span class="ident">Error</span><span class="op">&gt;</span> {
         <span class="macro">debug</span><span class="macro">!</span>(<span class="string">&quot;Swap buffers on context {:?}&quot;</span>, <span class="self">self</span>.<span class="ident">context_id</span>);
         <span class="self">self</span>.<span class="ident">validate_context</span>(<span class="ident">context</span>)<span class="question-mark">?</span>;
@@ -413,12 +546,12 @@
 
         <span class="comment">// Fetch a new back buffer, recycling presented buffers if possible.</span>
         <span class="kw">let</span> <span class="ident">new_back_buffer</span> <span class="op">=</span> <span class="self">self</span>
-            .<span class="ident">presented_surfaces</span>
+            .<span class="ident">recycled_surfaces</span>
             .<span class="ident">iter</span>()
             .<span class="ident">position</span>(<span class="op">|</span><span class="ident">surface</span><span class="op">|</span> <span class="ident">surface</span>.<span class="ident">size</span>() <span class="op">==</span> <span class="self">self</span>.<span class="ident">size</span>)
             .<span class="ident">map</span>(<span class="op">|</span><span class="ident">index</span><span class="op">|</span> {
                 <span class="macro">debug</span><span class="macro">!</span>(<span class="string">&quot;Recyling surface for context {:?}&quot;</span>, <span class="self">self</span>.<span class="ident">context_id</span>);
-                <span class="prelude-val">Ok</span>(<span class="self">self</span>.<span class="ident">presented_surfaces</span>.<span class="ident">swap_remove</span>(<span class="ident">index</span>))
+                <span class="prelude-val">Ok</span>(<span class="self">self</span>.<span class="ident">recycled_surfaces</span>.<span class="ident">swap_remove</span>(<span class="ident">index</span>))
             })
             .<span class="ident">unwrap_or_else</span>(<span class="op">||</span> {
                 <span class="macro">debug</span><span class="macro">!</span>(
@@ -435,7 +568,7 @@
             <span class="ident">new_back_buffer</span>.<span class="ident">id</span>(),
             <span class="self">self</span>.<span class="ident">context_id</span>
         );
-        <span class="kw">let</span> <span class="ident">new_front_buffer</span> <span class="op">=</span> <span class="kw">match</span> <span class="self">self</span>.<span class="ident">unattached_front_buffer</span>.<span class="ident">as_mut</span>() {
+        <span class="kw">let</span> <span class="ident">new_front_buffer</span> <span class="op">=</span> <span class="kw">match</span> <span class="self">self</span>.<span class="ident">unattached_surface</span>.<span class="ident">as_mut</span>() {
             <span class="prelude-val">Some</span>(<span class="ident">surface</span>) <span class="op">=&gt;</span> {
                 <span class="macro">debug</span><span class="macro">!</span>(<span class="string">&quot;Replacing unattached surface&quot;</span>);
                 <span class="ident">mem</span>::<span class="ident">replace</span>(<span class="ident">surface</span>, <span class="ident">new_back_buffer</span>)
@@ -453,7 +586,7 @@
             <span class="self">self</span>.<span class="ident">context_id</span>
         );
         <span class="self">self</span>.<span class="ident">pending_surface</span> <span class="op">=</span> <span class="prelude-val">Some</span>(<span class="ident">new_front_buffer</span>);
-        <span class="kw">for</span> <span class="ident">surface</span> <span class="kw">in</span> <span class="self">self</span>.<span class="ident">presented_surfaces</span>.<span class="ident">drain</span>(..) {
+        <span class="kw">for</span> <span class="ident">surface</span> <span class="kw">in</span> <span class="self">self</span>.<span class="ident">recycled_surfaces</span>.<span class="ident">drain</span>(..) {
             <span class="macro">debug</span><span class="macro">!</span>(<span class="string">&quot;Destroying a surface for context {:?}&quot;</span>, <span class="self">self</span>.<span class="ident">context_id</span>);
             <span class="ident">device</span>.<span class="ident">destroy_surface</span>(<span class="ident">context</span>, <span class="ident">surface</span>)<span class="question-mark">?</span>;
         }
@@ -461,6 +594,10 @@
         <span class="prelude-val">Ok</span>(())
     }
 
+    <span class="comment">// Swap the attached swap chain.</span>
+    <span class="comment">// Called by the producer.</span>
+    <span class="comment">// Returns an error if `context` is not the prodcer context for both swap chains.</span>
+    <span class="comment">// Returns an error if this swap chain is attached, or the other swap chain is detached.</span>
     <span class="kw">fn</span> <span class="ident">take_attachment_from</span>(
         <span class="kw-2">&amp;</span><span class="kw-2">mut</span> <span class="self">self</span>,
         <span class="ident">device</span>: <span class="kw-2">&amp;</span><span class="kw-2">mut</span> <span class="ident">Device</span>,
@@ -470,19 +607,24 @@
         <span class="self">self</span>.<span class="ident">validate_context</span>(<span class="ident">context</span>)<span class="question-mark">?</span>;
         <span class="ident">other</span>.<span class="ident">validate_context</span>(<span class="ident">context</span>)<span class="question-mark">?</span>;
         <span class="kw">if</span> <span class="kw">let</span> (<span class="prelude-val">Some</span>(<span class="ident">surface</span>), <span class="bool-val">true</span>) <span class="op">=</span> (
-            <span class="self">self</span>.<span class="ident">unattached_front_buffer</span>.<span class="ident">take</span>(),
-            <span class="ident">other</span>.<span class="ident">unattached_front_buffer</span>.<span class="ident">is_none</span>(),
+            <span class="self">self</span>.<span class="ident">unattached_surface</span>.<span class="ident">take</span>(),
+            <span class="ident">other</span>.<span class="ident">unattached_surface</span>.<span class="ident">is_none</span>(),
         ) {
             <span class="macro">debug</span><span class="macro">!</span>(<span class="string">&quot;Attaching surface {:?}&quot;</span>, <span class="ident">surface</span>.<span class="ident">id</span>());
             <span class="kw">let</span> <span class="ident">surface</span> <span class="op">=</span> <span class="ident">device</span>.<span class="ident">replace_context_surface</span>(<span class="ident">context</span>, <span class="ident">surface</span>)<span class="question-mark">?</span>;
             <span class="macro">debug</span><span class="macro">!</span>(<span class="string">&quot;Detaching surface {:?}&quot;</span>, <span class="ident">surface</span>.<span class="ident">id</span>());
-            <span class="ident">other</span>.<span class="ident">unattached_front_buffer</span> <span class="op">=</span> <span class="prelude-val">Some</span>(<span class="ident">surface</span>);
+            <span class="ident">other</span>.<span class="ident">unattached_surface</span> <span class="op">=</span> <span class="prelude-val">Some</span>(<span class="ident">surface</span>);
             <span class="prelude-val">Ok</span>(())
         } <span class="kw">else</span> {
             <span class="prelude-val">Err</span>(<span class="ident">Error</span>::<span class="ident">Failed</span>)
         }
     }
 
+    <span class="comment">// Resize the swap chain.</span>
+    <span class="comment">// This creates a new back buffer of the appropriate size,</span>
+    <span class="comment">// and destroys the old one.</span>
+    <span class="comment">// Called by the producer.</span>
+    <span class="comment">// Returns an error if `context` is not the prodcer context for this swap chain.</span>
     <span class="kw">fn</span> <span class="ident">resize</span>(
         <span class="kw-2">&amp;</span><span class="kw-2">mut</span> <span class="self">self</span>,
         <span class="ident">device</span>: <span class="kw-2">&amp;</span><span class="kw-2">mut</span> <span class="ident">Device</span>,
@@ -498,7 +640,7 @@
             <span class="ident">new_back_buffer</span>.<span class="ident">id</span>(),
             <span class="self">self</span>.<span class="ident">context_id</span>
         );
-        <span class="kw">let</span> <span class="ident">old_back_buffer</span> <span class="op">=</span> <span class="kw">match</span> <span class="self">self</span>.<span class="ident">unattached_front_buffer</span>.<span class="ident">as_mut</span>() {
+        <span class="kw">let</span> <span class="ident">old_back_buffer</span> <span class="op">=</span> <span class="kw">match</span> <span class="self">self</span>.<span class="ident">unattached_surface</span>.<span class="ident">as_mut</span>() {
             <span class="prelude-val">Some</span>(<span class="ident">surface</span>) <span class="op">=&gt;</span> <span class="ident">mem</span>::<span class="ident">replace</span>(<span class="ident">surface</span>, <span class="ident">new_back_buffer</span>),
             <span class="prelude-val">None</span> <span class="op">=&gt;</span> <span class="ident">device</span>.<span class="ident">replace_context_surface</span>(<span class="ident">context</span>, <span class="ident">new_back_buffer</span>)<span class="question-mark">?</span>,
         };
@@ -507,41 +649,59 @@
         <span class="prelude-val">Ok</span>(())
     }
 
+    <span class="comment">// Take the current front buffer.</span>
+    <span class="comment">// Called by a consumer.</span>
     <span class="kw">fn</span> <span class="ident">take_surface</span>(<span class="kw-2">&amp;</span><span class="kw-2">mut</span> <span class="self">self</span>) <span class="op">-&gt;</span> <span class="prelude-ty">Option</span><span class="op">&lt;</span><span class="ident">Surface</span><span class="op">&gt;</span> {
         <span class="self">self</span>.<span class="ident">pending_surface</span>
             .<span class="ident">take</span>()
-            .<span class="ident">or_else</span>(<span class="op">||</span> <span class="self">self</span>.<span class="ident">presented_surfaces</span>.<span class="ident">pop</span>())
+            .<span class="ident">or_else</span>(<span class="op">||</span> <span class="self">self</span>.<span class="ident">recycled_surfaces</span>.<span class="ident">pop</span>())
     }
 
+    <span class="comment">// Recycle the current front buffer.</span>
+    <span class="comment">// Called by a consumer.</span>
     <span class="kw">fn</span> <span class="ident">recycle_surface</span>(<span class="kw-2">&amp;</span><span class="kw-2">mut</span> <span class="self">self</span>, <span class="ident">surface</span>: <span class="ident">Surface</span>) {
-        <span class="self">self</span>.<span class="ident">presented_surfaces</span>.<span class="ident">push</span>(<span class="ident">surface</span>)
+        <span class="self">self</span>.<span class="ident">recycled_surfaces</span>.<span class="ident">push</span>(<span class="ident">surface</span>)
     }
 
-    <span class="kw">fn</span> <span class="ident">destroy</span>(<span class="kw-2">&amp;</span><span class="kw-2">mut</span> <span class="self">self</span>, <span class="ident">device</span>: <span class="kw-2">&amp;</span><span class="kw-2">mut</span> <span class="ident">Device</span>, <span class="ident">context</span>: <span class="kw-2">&amp;</span><span class="kw-2">mut</span> <span class="ident">Context</span>) {
+    <span class="comment">// Destroy the swap chain.</span>
+    <span class="comment">// Called by the producer.</span>
+    <span class="comment">// Returns an error if `context` is not the prodcer context for this swap chain.</span>
+    <span class="kw">fn</span> <span class="ident">destroy</span>(<span class="kw-2">&amp;</span><span class="kw-2">mut</span> <span class="self">self</span>, <span class="ident">device</span>: <span class="kw-2">&amp;</span><span class="kw-2">mut</span> <span class="ident">Device</span>, <span class="ident">context</span>: <span class="kw-2">&amp;</span><span class="kw-2">mut</span> <span class="ident">Context</span>) <span class="op">-&gt;</span> <span class="prelude-ty">Result</span><span class="op">&lt;</span>(), <span class="ident">Error</span><span class="op">&gt;</span> {
+        <span class="self">self</span>.<span class="ident">validate_context</span>(<span class="ident">context</span>)<span class="question-mark">?</span>;
         <span class="kw">let</span> <span class="ident">surfaces</span> <span class="op">=</span> <span class="self">self</span>
             .<span class="ident">pending_surface</span>
             .<span class="ident">take</span>()
             .<span class="ident">into_iter</span>()
-            .<span class="ident">chain</span>(<span class="self">self</span>.<span class="ident">unattached_front_buffer</span>.<span class="ident">take</span>().<span class="ident">into_iter</span>())
-            .<span class="ident">chain</span>(<span class="self">self</span>.<span class="ident">presented_surfaces</span>.<span class="ident">drain</span>(..));
+            .<span class="ident">chain</span>(<span class="self">self</span>.<span class="ident">unattached_surface</span>.<span class="ident">take</span>().<span class="ident">into_iter</span>())
+            .<span class="ident">chain</span>(<span class="self">self</span>.<span class="ident">recycled_surfaces</span>.<span class="ident">drain</span>(..));
         <span class="kw">for</span> <span class="ident">surface</span> <span class="kw">in</span> <span class="ident">surfaces</span> {
-            <span class="ident">device</span>.<span class="ident">destroy_surface</span>(<span class="ident">context</span>, <span class="ident">surface</span>).<span class="ident">unwrap</span>();
+            <span class="ident">device</span>.<span class="ident">destroy_surface</span>(<span class="ident">context</span>, <span class="ident">surface</span>)<span class="question-mark">?</span>;
         }
+        <span class="prelude-val">Ok</span>(())
     }
 }
 
+<span class="doccomment">/// A thread-safe swap chain.</span>
 <span class="attribute">#[<span class="ident">derive</span>(<span class="ident">Clone</span>)]</span>
 <span class="kw">pub</span> <span class="kw">struct</span> <span class="ident">SwapChain</span>(<span class="ident">Arc</span><span class="op">&lt;</span><span class="ident">Mutex</span><span class="op">&lt;</span><span class="ident">SwapChainData</span><span class="op">&gt;&gt;</span>);
 
 <span class="kw">impl</span> <span class="ident">SwapChain</span> {
+    <span class="comment">// Guarantee unique access to the swap chain data</span>
     <span class="kw">fn</span> <span class="ident">lock</span>(<span class="kw-2">&amp;</span><span class="self">self</span>) <span class="op">-&gt;</span> <span class="ident">MutexGuard</span><span class="op">&lt;</span><span class="ident">SwapChainData</span><span class="op">&gt;</span> {
         <span class="self">self</span>.<span class="number">0</span>.<span class="ident">lock</span>().<span class="ident">unwrap_or_else</span>(<span class="op">|</span><span class="ident">err</span><span class="op">|</span> <span class="ident">err</span>.<span class="ident">into_inner</span>())
     }
 
+    <span class="doccomment">/// Swap the back and front buffers.</span>
+    <span class="doccomment">/// Called by the producer.</span>
+    <span class="doccomment">/// Returns an error if `context` is not the prodcer context for this swap chain.</span>
     <span class="kw">pub</span> <span class="kw">fn</span> <span class="ident">swap_buffers</span>(<span class="kw-2">&amp;</span><span class="self">self</span>, <span class="ident">device</span>: <span class="kw-2">&amp;</span><span class="kw-2">mut</span> <span class="ident">Device</span>, <span class="ident">context</span>: <span class="kw-2">&amp;</span><span class="kw-2">mut</span> <span class="ident">Context</span>) <span class="op">-&gt;</span> <span class="prelude-ty">Result</span><span class="op">&lt;</span>(), <span class="ident">Error</span><span class="op">&gt;</span> {
         <span class="self">self</span>.<span class="ident">lock</span>().<span class="ident">swap_buffers</span>(<span class="ident">device</span>, <span class="ident">context</span>)
     }
 
+    <span class="doccomment">/// Swap the attached swap chain.</span>
+    <span class="doccomment">/// Called by the producer.</span>
+    <span class="doccomment">/// Returns an error if `context` is not the prodcer context for both swap chains.</span>
+    <span class="doccomment">/// Returns an error if this swap chain is attached, or the other swap chain is detached.</span>
     <span class="kw">pub</span> <span class="kw">fn</span> <span class="ident">take_attachment_from</span>(
         <span class="kw-2">&amp;</span><span class="self">self</span>,
         <span class="ident">device</span>: <span class="kw-2">&amp;</span><span class="kw-2">mut</span> <span class="ident">Device</span>,
@@ -552,6 +712,11 @@
             .<span class="ident">take_attachment_from</span>(<span class="ident">device</span>, <span class="ident">context</span>, <span class="kw-2">&amp;</span><span class="kw-2">mut</span> <span class="kw-2">*</span><span class="ident">other</span>.<span class="ident">lock</span>())
     }
 
+    <span class="doccomment">/// Resize the swap chain.</span>
+    <span class="doccomment">/// This creates a new back buffer of the appropriate size,</span>
+    <span class="doccomment">/// and destroys the old one.</span>
+    <span class="doccomment">/// Called by the producer.</span>
+    <span class="doccomment">/// Returns an error if `context` is not the prodcer context for this swap chain.</span>
     <span class="kw">pub</span> <span class="kw">fn</span> <span class="ident">resize</span>(
         <span class="kw-2">&amp;</span><span class="self">self</span>,
         <span class="ident">device</span>: <span class="kw-2">&amp;</span><span class="kw-2">mut</span> <span class="ident">Device</span>,
@@ -561,34 +726,44 @@
         <span class="self">self</span>.<span class="ident">lock</span>().<span class="ident">resize</span>(<span class="ident">device</span>, <span class="ident">context</span>, <span class="ident">size</span>)
     }
 
+    <span class="doccomment">/// Take the current front buffer.</span>
+    <span class="doccomment">/// Called by a consumer.</span>
     <span class="kw">pub</span> <span class="kw">fn</span> <span class="ident">take_surface</span>(<span class="kw-2">&amp;</span><span class="self">self</span>) <span class="op">-&gt;</span> <span class="prelude-ty">Option</span><span class="op">&lt;</span><span class="ident">Surface</span><span class="op">&gt;</span> {
         <span class="self">self</span>.<span class="ident">lock</span>().<span class="ident">take_surface</span>()
     }
 
+    <span class="doccomment">/// Recycle the current front buffer.</span>
+    <span class="doccomment">/// Called by a consumer.</span>
     <span class="kw">pub</span> <span class="kw">fn</span> <span class="ident">recycle_surface</span>(<span class="kw-2">&amp;</span><span class="self">self</span>, <span class="ident">surface</span>: <span class="ident">Surface</span>) {
         <span class="self">self</span>.<span class="ident">lock</span>().<span class="ident">recycle_surface</span>(<span class="ident">surface</span>)
     }
 
+    <span class="doccomment">/// Is this the attached swap chain?</span>
     <span class="kw">pub</span> <span class="kw">fn</span> <span class="ident">is_attached</span>(<span class="kw-2">&amp;</span><span class="self">self</span>) <span class="op">-&gt;</span> <span class="ident">bool</span> {
-        <span class="self">self</span>.<span class="ident">lock</span>().<span class="ident">unattached_front_buffer</span>.<span class="ident">is_none</span>()
+        <span class="self">self</span>.<span class="ident">lock</span>().<span class="ident">unattached_surface</span>.<span class="ident">is_none</span>()
     }
 
-    <span class="kw">fn</span> <span class="ident">destroy</span>(<span class="kw-2">&amp;</span><span class="self">self</span>, <span class="ident">device</span>: <span class="kw-2">&amp;</span><span class="kw-2">mut</span> <span class="ident">Device</span>, <span class="ident">context</span>: <span class="kw-2">&amp;</span><span class="kw-2">mut</span> <span class="ident">Context</span>) {
-        <span class="self">self</span>.<span class="ident">lock</span>().<span class="ident">destroy</span>(<span class="ident">device</span>, <span class="ident">context</span>);
+    <span class="doccomment">/// Destroy the swap chain.</span>
+    <span class="doccomment">/// Called by the producer.</span>
+    <span class="doccomment">/// Returns an error if `context` is not the prodcer context for this swap chain.</span>
+    <span class="kw">pub</span> <span class="kw">fn</span> <span class="ident">destroy</span>(<span class="kw-2">&amp;</span><span class="self">self</span>, <span class="ident">device</span>: <span class="kw-2">&amp;</span><span class="kw-2">mut</span> <span class="ident">Device</span>, <span class="ident">context</span>: <span class="kw-2">&amp;</span><span class="kw-2">mut</span> <span class="ident">Context</span>) <span class="op">-&gt;</span> <span class="prelude-ty">Result</span><span class="op">&lt;</span>(), <span class="ident">Error</span><span class="op">&gt;</span> {
+        <span class="self">self</span>.<span class="ident">lock</span>().<span class="ident">destroy</span>(<span class="ident">device</span>, <span class="ident">context</span>)
     }
 
-    <span class="kw">fn</span> <span class="ident">create_attached</span>(<span class="ident">device</span>: <span class="kw-2">&amp;</span><span class="kw-2">mut</span> <span class="ident">Device</span>, <span class="ident">context</span>: <span class="kw-2">&amp;</span><span class="kw-2">mut</span> <span class="ident">Context</span>) <span class="op">-&gt;</span> <span class="prelude-ty">Result</span><span class="op">&lt;</span><span class="ident">SwapChain</span>, <span class="ident">Error</span><span class="op">&gt;</span> {
+    <span class="doccomment">/// Create a new attached swap chain</span>
+    <span class="kw">pub</span> <span class="kw">fn</span> <span class="ident">create_attached</span>(<span class="ident">device</span>: <span class="kw-2">&amp;</span><span class="kw-2">mut</span> <span class="ident">Device</span>, <span class="ident">context</span>: <span class="kw-2">&amp;</span><span class="kw-2">mut</span> <span class="ident">Context</span>) <span class="op">-&gt;</span> <span class="prelude-ty">Result</span><span class="op">&lt;</span><span class="ident">SwapChain</span>, <span class="ident">Error</span><span class="op">&gt;</span> {
         <span class="kw">let</span> <span class="ident">size</span> <span class="op">=</span> <span class="ident">device</span>.<span class="ident">context_surface_size</span>(<span class="ident">context</span>)<span class="question-mark">?</span>;
         <span class="prelude-val">Ok</span>(<span class="ident">SwapChain</span>(<span class="ident">Arc</span>::<span class="ident">new</span>(<span class="ident">Mutex</span>::<span class="ident">new</span>(<span class="ident">SwapChainData</span> {
             <span class="ident">size</span>,
             <span class="ident">context_id</span>: <span class="ident">context</span>.<span class="ident">id</span>(),
-            <span class="ident">unattached_front_buffer</span>: <span class="prelude-val">None</span>,
+            <span class="ident">unattached_surface</span>: <span class="prelude-val">None</span>,
             <span class="ident">pending_surface</span>: <span class="prelude-val">None</span>,
-            <span class="ident">presented_surfaces</span>: <span class="ident">Vec</span>::<span class="ident">new</span>(),
+            <span class="ident">recycled_surfaces</span>: <span class="ident">Vec</span>::<span class="ident">new</span>(),
         }))))
     }
 
-    <span class="kw">fn</span> <span class="ident">create_detached</span>(
+    <span class="doccomment">/// Create a new detached swap chain</span>
+    <span class="kw">pub</span> <span class="kw">fn</span> <span class="ident">create_detached</span>(
         <span class="ident">device</span>: <span class="kw-2">&amp;</span><span class="kw-2">mut</span> <span class="ident">Device</span>,
         <span class="ident">context</span>: <span class="kw-2">&amp;</span><span class="kw-2">mut</span> <span class="ident">Context</span>,
         <span class="ident">size</span>: <span class="ident">Size2D</span><span class="op">&lt;</span><span class="ident">i32</span><span class="op">&gt;</span>,
@@ -598,20 +773,24 @@
         <span class="prelude-val">Ok</span>(<span class="ident">SwapChain</span>(<span class="ident">Arc</span>::<span class="ident">new</span>(<span class="ident">Mutex</span>::<span class="ident">new</span>(<span class="ident">SwapChainData</span> {
             <span class="ident">size</span>,
             <span class="ident">context_id</span>: <span class="ident">context</span>.<span class="ident">id</span>(),
-            <span class="ident">unattached_front_buffer</span>: <span class="prelude-val">Some</span>(<span class="ident">surface</span>),
+            <span class="ident">unattached_surface</span>: <span class="prelude-val">Some</span>(<span class="ident">surface</span>),
             <span class="ident">pending_surface</span>: <span class="prelude-val">None</span>,
-            <span class="ident">presented_surfaces</span>: <span class="ident">Vec</span>::<span class="ident">new</span>(),
+            <span class="ident">recycled_surfaces</span>: <span class="ident">Vec</span>::<span class="ident">new</span>(),
         }))))
     }
 }
 
+<span class="doccomment">/// A thread-safe collection of swap chains.</span>
 <span class="attribute">#[<span class="ident">derive</span>(<span class="ident">Clone</span>, <span class="ident">Default</span>)]</span>
 <span class="kw">pub</span> <span class="kw">struct</span> <span class="ident">SwapChains</span><span class="op">&lt;</span><span class="ident">SwapChainID</span>: <span class="ident">Eq</span> <span class="op">+</span> <span class="ident">Hash</span><span class="op">&gt;</span> {
+    <span class="comment">// The swap chain ids, indexed by context id</span>
     <span class="ident">ids</span>: <span class="ident">Arc</span><span class="op">&lt;</span><span class="ident">Mutex</span><span class="op">&lt;</span><span class="ident">FnvHashMap</span><span class="op">&lt;</span><span class="ident">ContextID</span>, <span class="ident">FnvHashSet</span><span class="op">&lt;</span><span class="ident">SwapChainID</span><span class="op">&gt;&gt;</span><span class="op">&gt;&gt;</span>,
+    <span class="comment">// The swap chains, indexed by swap chain id</span>
     <span class="ident">table</span>: <span class="ident">Arc</span><span class="op">&lt;</span><span class="ident">RwLock</span><span class="op">&lt;</span><span class="ident">FnvHashMap</span><span class="op">&lt;</span><span class="ident">SwapChainID</span>, <span class="ident">SwapChain</span><span class="op">&gt;&gt;</span><span class="op">&gt;</span>,
 }
 
 <span class="kw">impl</span><span class="op">&lt;</span><span class="ident">SwapChainID</span>: <span class="ident">Clone</span> <span class="op">+</span> <span class="ident">Eq</span> <span class="op">+</span> <span class="ident">Hash</span> <span class="op">+</span> <span class="ident">Debug</span><span class="op">&gt;</span> <span class="ident">SwapChains</span><span class="op">&lt;</span><span class="ident">SwapChainID</span><span class="op">&gt;</span> {
+    <span class="doccomment">/// Create a new collection.</span>
     <span class="kw">pub</span> <span class="kw">fn</span> <span class="ident">new</span>() <span class="op">-&gt;</span> <span class="ident">SwapChains</span><span class="op">&lt;</span><span class="ident">SwapChainID</span><span class="op">&gt;</span> {
         <span class="ident">SwapChains</span> {
             <span class="ident">ids</span>: <span class="ident">Arc</span>::<span class="ident">new</span>(<span class="ident">Mutex</span>::<span class="ident">new</span>(<span class="ident">FnvHashMap</span>::<span class="ident">default</span>())),
@@ -619,23 +798,29 @@
         }
     }
 
+    <span class="comment">// Lock the ids</span>
     <span class="kw">fn</span> <span class="ident">ids</span>(<span class="kw-2">&amp;</span><span class="self">self</span>) <span class="op">-&gt;</span> <span class="ident">MutexGuard</span><span class="op">&lt;</span><span class="ident">FnvHashMap</span><span class="op">&lt;</span><span class="ident">ContextID</span>, <span class="ident">FnvHashSet</span><span class="op">&lt;</span><span class="ident">SwapChainID</span><span class="op">&gt;&gt;</span><span class="op">&gt;</span> {
         <span class="self">self</span>.<span class="ident">ids</span>.<span class="ident">lock</span>().<span class="ident">unwrap_or_else</span>(<span class="op">|</span><span class="ident">err</span><span class="op">|</span> <span class="ident">err</span>.<span class="ident">into_inner</span>())
     }
 
+    <span class="comment">// Lock the lookup table</span>
     <span class="kw">fn</span> <span class="ident">table</span>(<span class="kw-2">&amp;</span><span class="self">self</span>) <span class="op">-&gt;</span> <span class="ident">RwLockReadGuard</span><span class="op">&lt;</span><span class="ident">FnvHashMap</span><span class="op">&lt;</span><span class="ident">SwapChainID</span>, <span class="ident">SwapChain</span><span class="op">&gt;&gt;</span> {
         <span class="self">self</span>.<span class="ident">table</span>.<span class="ident">read</span>().<span class="ident">unwrap_or_else</span>(<span class="op">|</span><span class="ident">err</span><span class="op">|</span> <span class="ident">err</span>.<span class="ident">into_inner</span>())
     }
 
+    <span class="comment">// Lock the lookup table for writing</span>
     <span class="kw">fn</span> <span class="ident">table_mut</span>(<span class="kw-2">&amp;</span><span class="self">self</span>) <span class="op">-&gt;</span> <span class="ident">RwLockWriteGuard</span><span class="op">&lt;</span><span class="ident">FnvHashMap</span><span class="op">&lt;</span><span class="ident">SwapChainID</span>, <span class="ident">SwapChain</span><span class="op">&gt;&gt;</span> {
         <span class="self">self</span>.<span class="ident">table</span>.<span class="ident">write</span>().<span class="ident">unwrap_or_else</span>(<span class="op">|</span><span class="ident">err</span><span class="op">|</span> <span class="ident">err</span>.<span class="ident">into_inner</span>())
     }
 
+    <span class="doccomment">/// Get a swap chain</span>
     <span class="kw">pub</span> <span class="kw">fn</span> <span class="ident">get</span>(<span class="kw-2">&amp;</span><span class="self">self</span>, <span class="ident">id</span>: <span class="ident">SwapChainID</span>) <span class="op">-&gt;</span> <span class="prelude-ty">Option</span><span class="op">&lt;</span><span class="ident">SwapChain</span><span class="op">&gt;</span> {
         <span class="macro">debug</span><span class="macro">!</span>(<span class="string">&quot;Getting swap chain {:?}&quot;</span>, <span class="ident">id</span>);
         <span class="self">self</span>.<span class="ident">table</span>().<span class="ident">get</span>(<span class="kw-2">&amp;</span><span class="ident">id</span>).<span class="ident">cloned</span>()
     }
 
+    <span class="doccomment">/// Create a new attached swap chain and insert it in the table.</span>
+    <span class="doccomment">/// Returns an error if the `id` is already in the table.</span>
     <span class="kw">pub</span> <span class="kw">fn</span> <span class="ident">create_attached_swap_chain</span>(
         <span class="kw-2">&amp;</span><span class="self">self</span>,
         <span class="ident">id</span>: <span class="ident">SwapChainID</span>,
@@ -653,6 +838,8 @@
         <span class="prelude-val">Ok</span>(())
     }
 
+    <span class="doccomment">/// Create a new dettached swap chain and insert it in the table.</span>
+    <span class="doccomment">/// Returns an error if the `id` is already in the table.</span>
     <span class="kw">pub</span> <span class="kw">fn</span> <span class="ident">create_detached_swap_chain</span>(
         <span class="kw-2">&amp;</span><span class="self">self</span>,
         <span class="ident">id</span>: <span class="ident">SwapChainID</span>,
@@ -673,20 +860,39 @@
         <span class="prelude-val">Ok</span>(())
     }
 
-    <span class="kw">pub</span> <span class="kw">fn</span> <span class="ident">destroy</span>(<span class="kw-2">&amp;</span><span class="self">self</span>, <span class="ident">id</span>: <span class="ident">SwapChainID</span>, <span class="ident">device</span>: <span class="kw-2">&amp;</span><span class="kw-2">mut</span> <span class="ident">Device</span>, <span class="ident">context</span>: <span class="kw-2">&amp;</span><span class="kw-2">mut</span> <span class="ident">Context</span>) {
+    <span class="doccomment">/// Destroy a swap chain.</span>
+    <span class="doccomment">/// Called by the producer.</span>
+    <span class="doccomment">/// Returns an error if `context` is not the prodcer context for the swap chain.</span>
+    <span class="kw">pub</span> <span class="kw">fn</span> <span class="ident">destroy</span>(
+        <span class="kw-2">&amp;</span><span class="self">self</span>,
+        <span class="ident">id</span>: <span class="ident">SwapChainID</span>,
+        <span class="ident">device</span>: <span class="kw-2">&amp;</span><span class="kw-2">mut</span> <span class="ident">Device</span>,
+        <span class="ident">context</span>: <span class="kw-2">&amp;</span><span class="kw-2">mut</span> <span class="ident">Context</span>,
+    ) <span class="op">-&gt;</span> <span class="prelude-ty">Result</span><span class="op">&lt;</span>(), <span class="ident">Error</span><span class="op">&gt;</span> {
         <span class="kw">if</span> <span class="kw">let</span> <span class="prelude-val">Some</span>(<span class="ident">swap_chain</span>) <span class="op">=</span> <span class="self">self</span>.<span class="ident">table_mut</span>().<span class="ident">remove</span>(<span class="kw-2">&amp;</span><span class="ident">id</span>) {
-            <span class="ident">swap_chain</span>.<span class="ident">destroy</span>(<span class="ident">device</span>, <span class="ident">context</span>);
+            <span class="ident">swap_chain</span>.<span class="ident">destroy</span>(<span class="ident">device</span>, <span class="ident">context</span>)<span class="question-mark">?</span>;
         }
+        <span class="kw">if</span> <span class="kw">let</span> <span class="prelude-val">Some</span>(<span class="ident">ids</span>) <span class="op">=</span> <span class="self">self</span>.<span class="ident">ids</span>().<span class="ident">get_mut</span>(<span class="kw-2">&amp;</span><span class="ident">context</span>.<span class="ident">id</span>()) {
+            <span class="ident">ids</span>.<span class="ident">remove</span>(<span class="kw-2">&amp;</span><span class="ident">id</span>);
+        }
+        <span class="prelude-val">Ok</span>(())
     }
 
-    <span class="kw">pub</span> <span class="kw">fn</span> <span class="ident">destroy_all</span>(<span class="kw-2">&amp;</span><span class="self">self</span>, <span class="ident">device</span>: <span class="kw-2">&amp;</span><span class="kw-2">mut</span> <span class="ident">Device</span>, <span class="ident">context</span>: <span class="kw-2">&amp;</span><span class="kw-2">mut</span> <span class="ident">Context</span>) {
+    <span class="doccomment">/// Destroy all the swap chains for a particular producer context.</span>
+    <span class="doccomment">/// Called by the producer.</span>
+    <span class="kw">pub</span> <span class="kw">fn</span> <span class="ident">destroy_all</span>(<span class="kw-2">&amp;</span><span class="self">self</span>, <span class="ident">device</span>: <span class="kw-2">&amp;</span><span class="kw-2">mut</span> <span class="ident">Device</span>, <span class="ident">context</span>: <span class="kw-2">&amp;</span><span class="kw-2">mut</span> <span class="ident">Context</span>) <span class="op">-&gt;</span> <span class="prelude-ty">Result</span><span class="op">&lt;</span>(), <span class="ident">Error</span><span class="op">&gt;</span> {
         <span class="kw">if</span> <span class="kw">let</span> <span class="prelude-val">Some</span>(<span class="kw-2">mut</span> <span class="ident">ids</span>) <span class="op">=</span> <span class="self">self</span>.<span class="ident">ids</span>().<span class="ident">remove</span>(<span class="kw-2">&amp;</span><span class="ident">context</span>.<span class="ident">id</span>()) {
             <span class="kw">for</span> <span class="ident">id</span> <span class="kw">in</span> <span class="ident">ids</span>.<span class="ident">drain</span>() {
-                <span class="self">self</span>.<span class="ident">destroy</span>(<span class="ident">id</span>, <span class="ident">device</span>, <span class="ident">context</span>);
+                <span class="kw">if</span> <span class="kw">let</span> <span class="prelude-val">Some</span>(<span class="ident">swap_chain</span>) <span class="op">=</span> <span class="self">self</span>.<span class="ident">table_mut</span>().<span class="ident">remove</span>(<span class="kw-2">&amp;</span><span class="ident">id</span>) {
+                    <span class="ident">swap_chain</span>.<span class="ident">destroy</span>(<span class="ident">device</span>, <span class="ident">context</span>)<span class="question-mark">?</span>;
+                }
             }
         }
+        <span class="prelude-val">Ok</span>(())
     }
 
+    <span class="doccomment">/// Iterate over all the swap chains for a particular producer context.</span>
+    <span class="doccomment">/// Called by the producer.</span>
     <span class="kw">pub</span> <span class="kw">fn</span> <span class="ident">iter</span>(
         <span class="kw-2">&amp;</span><span class="self">self</span>,
         <span class="kw">_</span>: <span class="kw-2">&amp;</span><span class="kw-2">mut</span> <span class="ident">Device</span>,
