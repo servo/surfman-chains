@@ -38,6 +38,10 @@ use std::sync::RwLock;
 use std::sync::RwLockReadGuard;
 use std::sync::RwLockWriteGuard;
 
+use sparkle::gl;
+use sparkle::gl::GLuint;
+use sparkle::gl::Gl;
+
 use surfman::Context;
 use surfman::ContextID;
 use surfman::Device;
@@ -208,6 +212,65 @@ impl SwapChainData {
         self.recycled_surfaces.push(surface)
     }
 
+    // Clear the current back buffer.
+    // Called by the producer.
+    // Returns an error if `context` is not the prodcer context for this swap chain.
+    fn clear_surface(
+        &mut self,
+        device: &mut Device,
+        context: &mut Context,
+        gl: &Gl,
+    ) -> Result<(), Error> {
+        self.validate_context(context)?;
+
+        // Save the current GL state
+        let mut bound_fbos = [0, 0];
+        let mut clear_color = [0., 0., 0., 0.];
+        let mut clear_depth = [0.];
+        let mut clear_stencil = [0];
+        unsafe {
+            gl.get_integer_v(gl::DRAW_FRAMEBUFFER_BINDING, &mut bound_fbos[0..]);
+            gl.get_integer_v(gl::READ_FRAMEBUFFER_BINDING, &mut bound_fbos[1..]);
+            gl.get_float_v(gl::COLOR_CLEAR_VALUE, &mut clear_color[..]);
+            gl.get_float_v(gl::DEPTH_CLEAR_VALUE, &mut clear_depth[..]);
+            gl.get_integer_v(gl::STENCIL_CLEAR_VALUE, &mut clear_stencil[..]);
+        }
+
+        // Make the back buffer the current surface
+        let reattach = match self.unattached_surface.take() {
+            Some(surface) => Some(device.replace_context_surface(context, surface)?),
+            None => None,
+        };
+
+        // Clear it
+        let fbo = device.context_surface_framebuffer_object(context)?;
+        gl.bind_framebuffer(gl::FRAMEBUFFER, fbo);
+        gl.clear_color(0., 0., 0., 0.);
+        gl.clear_depth(1.);
+        gl.clear_stencil(0);
+        gl.clear(gl::COLOR_BUFFER_BIT | gl::DEPTH_BUFFER_BIT | gl::STENCIL_BUFFER_BIT);
+
+        // Reattach the old surface
+        if let Some(surface) = reattach {
+            let surface = device.replace_context_surface(context, surface)?;
+            self.unattached_surface = Some(surface);
+        }
+
+        // Restore the GL state
+        gl.bind_framebuffer(gl::DRAW_FRAMEBUFFER, bound_fbos[0] as GLuint);
+        gl.bind_framebuffer(gl::READ_FRAMEBUFFER, bound_fbos[1] as GLuint);
+        gl.clear_color(
+            clear_color[0],
+            clear_color[1],
+            clear_color[2],
+            clear_color[3],
+        );
+        gl.clear_depth(clear_depth[0] as f64);
+        gl.clear_stencil(clear_stencil[0]);
+
+        Ok(())
+    }
+
     // Destroy the swap chain.
     // Called by the producer.
     // Returns an error if `context` is not the prodcer context for this swap chain.
@@ -269,6 +332,18 @@ impl SwapChain {
         size: Size2D<i32>,
     ) -> Result<(), Error> {
         self.lock().resize(device, context, size)
+    }
+
+    // Clear the current back buffer.
+    // Called by the producer.
+    // Returns an error if `context` is not the prodcer context for this swap chain.
+    pub fn clear_surface(
+        &mut self,
+        device: &mut Device,
+        context: &mut Context,
+        gl: &Gl,
+    ) -> Result<(), Error> {
+        self.lock().clear_surface(device, context, gl)
     }
 
     /// Take the current front buffer.

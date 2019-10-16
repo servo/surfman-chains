@@ -10,4 +10,5 @@ license = "MPL-2.0"
 euclid = "0.20"
 fnv = "1.0"
 log = "0.4"
+sparkle = "0.1"
 surfman = { git = "https://github.com/pcwalton/surfman" }
