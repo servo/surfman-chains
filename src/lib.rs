@@ -338,7 +338,7 @@ impl SwapChain {
     // Called by the producer.
     // Returns an error if `context` is not the producer context for this swap chain.
     pub fn clear_surface(
-        &mut self,
+        &self,
         device: &mut Device,
         context: &mut Context,
         gl: &Gl,
