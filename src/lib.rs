@@ -1,4 +1,4 @@
-/* This Source Code Form is subject to the terms of the Mozilla Public
+7/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
 
@@ -77,7 +77,7 @@ impl SwapChainData {
 
     // Swap the back and front buffers.
     // Called by the producer.
-    // Returns an error if `context` is not the prodcer context for this swap chain.
+    // Returns an error if `context` is not the producer context for this swap chain.
     fn swap_buffers(&mut self, device: &mut Device, context: &mut Context) -> Result<(), Error> {
         debug!("Swap buffers on context {:?}", self.context_id);
         self.validate_context(context)?;
@@ -145,7 +145,7 @@ impl SwapChainData {
 
     // Swap the attached swap chain.
     // Called by the producer.
-    // Returns an error if `context` is not the prodcer context for both swap chains.
+    // Returns an error if `context` is not the producer context for both swap chains.
     // Returns an error if this swap chain is attached, or the other swap chain is detached.
     fn take_attachment_from(
         &mut self,
@@ -173,7 +173,7 @@ impl SwapChainData {
     // This creates a new back buffer of the appropriate size,
     // and destroys the old one.
     // Called by the producer.
-    // Returns an error if `context` is not the prodcer context for this swap chain.
+    // Returns an error if `context` is not the producer context for this swap chain.
     fn resize(
         &mut self,
         device: &mut Device,
@@ -214,7 +214,7 @@ impl SwapChainData {
 
     // Clear the current back buffer.
     // Called by the producer.
-    // Returns an error if `context` is not the prodcer context for this swap chain.
+    // Returns an error if `context` is not the producer context for this swap chain.
     fn clear_surface(
         &mut self,
         device: &mut Device,
@@ -273,7 +273,7 @@ impl SwapChainData {
 
     // Destroy the swap chain.
     // Called by the producer.
-    // Returns an error if `context` is not the prodcer context for this swap chain.
+    // Returns an error if `context` is not the producer context for this swap chain.
     fn destroy(&mut self, device: &mut Device, context: &mut Context) -> Result<(), Error> {
         self.validate_context(context)?;
         let surfaces = self
@@ -301,14 +301,14 @@ impl SwapChain {
 
     /// Swap the back and front buffers.
     /// Called by the producer.
-    /// Returns an error if `context` is not the prodcer context for this swap chain.
+    /// Returns an error if `context` is not the producer context for this swap chain.
     pub fn swap_buffers(&self, device: &mut Device, context: &mut Context) -> Result<(), Error> {
         self.lock().swap_buffers(device, context)
     }
 
     /// Swap the attached swap chain.
     /// Called by the producer.
-    /// Returns an error if `context` is not the prodcer context for both swap chains.
+    /// Returns an error if `context` is not the producer context for both swap chains.
     /// Returns an error if this swap chain is attached, or the other swap chain is detached.
     pub fn take_attachment_from(
         &self,
@@ -324,7 +324,7 @@ impl SwapChain {
     /// This creates a new back buffer of the appropriate size,
     /// and destroys the old one.
     /// Called by the producer.
-    /// Returns an error if `context` is not the prodcer context for this swap chain.
+    /// Returns an error if `context` is not the producer context for this swap chain.
     pub fn resize(
         &self,
         device: &mut Device,
@@ -336,7 +336,7 @@ impl SwapChain {
 
     // Clear the current back buffer.
     // Called by the producer.
-    // Returns an error if `context` is not the prodcer context for this swap chain.
+    // Returns an error if `context` is not the producer context for this swap chain.
     pub fn clear_surface(
         &mut self,
         device: &mut Device,
@@ -365,7 +365,7 @@ impl SwapChain {
 
     /// Destroy the swap chain.
     /// Called by the producer.
-    /// Returns an error if `context` is not the prodcer context for this swap chain.
+    /// Returns an error if `context` is not the producer context for this swap chain.
     pub fn destroy(&self, device: &mut Device, context: &mut Context) -> Result<(), Error> {
         self.lock().destroy(device, context)
     }
@@ -482,7 +482,7 @@ impl<SwapChainID: Clone + Eq + Hash + Debug> SwapChains<SwapChainID> {
 
     /// Destroy a swap chain.
     /// Called by the producer.
-    /// Returns an error if `context` is not the prodcer context for the swap chain.
+    /// Returns an error if `context` is not the producer context for the swap chain.
     pub fn destroy(
         &self,
         id: SwapChainID,
