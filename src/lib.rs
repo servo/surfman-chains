@@ -174,6 +174,7 @@ impl SwapChainData {
     // and destroys the old one.
     // Called by the producer.
     // Returns an error if `context` is not the producer context for this swap chain.
+    // Returns an error if `size` is smaller than (1, 1).
     fn resize(
         &mut self,
         device: &mut Device,
@@ -182,6 +183,9 @@ impl SwapChainData {
     ) -> Result<(), Error> {
         debug!("Resizing context {:?} to {:?}", context.id(), size);
         self.validate_context(context)?;
+        if (size.width < 1) || (size.height < 1) {
+            return Err(Error::Failed);
+        }
         let surface_type = SurfaceType::Generic { size };
         let new_back_buffer = device.create_surface(context, &surface_type)?;
         debug!(
