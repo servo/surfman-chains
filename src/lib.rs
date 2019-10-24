@@ -232,6 +232,7 @@ impl SwapChainData {
         let mut clear_color = [0., 0., 0., 0.];
         let mut clear_depth = [0.];
         let mut clear_stencil = [0];
+        let scissor_enabled = gl.is_enabled(gl::SCISSOR_TEST);
         unsafe {
             gl.get_integer_v(gl::DRAW_FRAMEBUFFER_BINDING, &mut bound_fbos[0..]);
             gl.get_integer_v(gl::READ_FRAMEBUFFER_BINDING, &mut bound_fbos[1..]);
@@ -252,6 +253,7 @@ impl SwapChainData {
         gl.clear_color(0., 0., 0., 0.);
         gl.clear_depth(1.);
         gl.clear_stencil(0);
+        gl.disable(gl::SCISSOR_TEST);
         gl.clear(gl::COLOR_BUFFER_BIT | gl::DEPTH_BUFFER_BIT | gl::STENCIL_BUFFER_BIT);
 
         // Reattach the old surface
@@ -271,6 +273,9 @@ impl SwapChainData {
         );
         gl.clear_depth(clear_depth[0] as f64);
         gl.clear_stencil(clear_stencil[0]);
+        if scissor_enabled {
+            gl.enable(gl::SCISSOR_TEST);
+        }
 
         Ok(())
     }
