@@ -42,11 +42,12 @@ use sparkle::gl;
 use sparkle::gl::GLuint;
 use sparkle::gl::Gl;
 
-use surfman::Context;
+use surfman::platform::generic::universal::context::Context;
+use surfman::platform::generic::universal::device::Device;
+use surfman::platform::generic::universal::surface::Surface;
 use surfman::ContextID;
-use surfman::Device;
 use surfman::Error;
-use surfman::Surface;
+use surfman::SurfaceAccess;
 use surfman::SurfaceType;
 
 // The data stored for each swap chain.
@@ -55,6 +56,8 @@ struct SwapChainData {
     size: Size2D<i32>,
     // The id of the producer context
     context_id: ContextID,
+    // The surface access mode for the context.
+    surface_access: SurfaceAccess,
     // The back buffer of the swap chain.
     // Some if this swap chain is unattached,
     // None if it is attached (and so the context owns the surface).
@@ -108,7 +111,7 @@ impl SwapChainData {
                     self.size, self.context_id
                 );
                 let surface_type = SurfaceType::Generic { size: self.size };
-                device.create_surface(context, &surface_type)
+                device.create_surface(context, self.surface_access, &surface_type)
             })?;
 
         // Swap the buffers
@@ -187,7 +190,7 @@ impl SwapChainData {
             return Err(Error::Failed);
         }
         let surface_type = SurfaceType::Generic { size };
-        let new_back_buffer = device.create_surface(context, &surface_type)?;
+        let new_back_buffer = device.create_surface(context, self.surface_access, &surface_type)?;
         debug!(
             "Surface {:?} is the new back buffer for context {:?}",
             new_back_buffer.id(),
@@ -380,11 +383,16 @@ impl SwapChain {
     }
 
     /// Create a new attached swap chain
-    pub fn create_attached(device: &mut Device, context: &mut Context) -> Result<SwapChain, Error> {
+    pub fn create_attached(
+        device: &mut Device,
+        context: &mut Context,
+        surface_access: SurfaceAccess,
+    ) -> Result<SwapChain, Error> {
         let size = device.context_surface_size(context)?;
         Ok(SwapChain(Arc::new(Mutex::new(SwapChainData {
             size,
             context_id: context.id(),
+            surface_access,
             unattached_surface: None,
             pending_surface: None,
             recycled_surfaces: Vec::new(),
@@ -395,13 +403,15 @@ impl SwapChain {
     pub fn create_detached(
         device: &mut Device,
         context: &mut Context,
+        surface_access: SurfaceAccess,
         size: Size2D<i32>,
     ) -> Result<SwapChain, Error> {
         let surface_type = SurfaceType::Generic { size };
-        let surface = device.create_surface(context, &surface_type)?;
+        let surface = device.create_surface(context, surface_access, &surface_type)?;
         Ok(SwapChain(Arc::new(Mutex::new(SwapChainData {
             size,
             context_id: context.id(),
+            surface_access,
             unattached_surface: Some(surface),
             pending_surface: None,
             recycled_surfaces: Vec::new(),
@@ -455,10 +465,13 @@ impl<SwapChainID: Clone + Eq + Hash + Debug> SwapChains<SwapChainID> {
         id: SwapChainID,
         device: &mut Device,
         context: &mut Context,
+        surface_access: SurfaceAccess,
     ) -> Result<(), Error> {
         match self.table_mut().entry(id.clone()) {
             Entry::Occupied(_) => Err(Error::Failed)?,
-            Entry::Vacant(entry) => entry.insert(SwapChain::create_attached(device, context)?),
+            Entry::Vacant(entry) => {
+                entry.insert(SwapChain::create_attached(device, context, surface_access)?)
+            }
         };
         self.ids()
             .entry(context.id())
@@ -475,12 +488,16 @@ impl<SwapChainID: Clone + Eq + Hash + Debug> SwapChains<SwapChainID> {
         size: Size2D<i32>,
         device: &mut Device,
         context: &mut Context,
+        surface_access: SurfaceAccess,
     ) -> Result<(), Error> {
         match self.table_mut().entry(id.clone()) {
             Entry::Occupied(_) => Err(Error::Failed)?,
-            Entry::Vacant(entry) => {
-                entry.insert(SwapChain::create_detached(device, context, size)?)
-            }
+            Entry::Vacant(entry) => entry.insert(SwapChain::create_detached(
+                device,
+                context,
+                surface_access,
+                size,
+            )?),
         };
         self.ids()
             .entry(context.id())
