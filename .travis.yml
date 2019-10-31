@@ -14,4 +14,4 @@ before_script:
 
 script:
   - cargo fmt -- --check
-  - cargo build
+  - cargo build --features=surfman/sm-osmesa
