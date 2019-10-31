@@ -70,8 +70,8 @@ struct SwapChainData {
 
 impl SwapChainData {
     // Returns `Ok` if `context` is the producer context for this swap chain.
-    fn validate_context(&self, context: &mut Context) -> Result<(), Error> {
-        if self.context_id == context.id() {
+    fn validate_context(&self, device: &Device, context: &Context) -> Result<(), Error> {
+        if self.context_id == device.context_id(context) {
             Ok(())
         } else {
             Err(Error::IncompatibleContext)
@@ -83,7 +83,7 @@ impl SwapChainData {
     // Returns an error if `context` is not the producer context for this swap chain.
     fn swap_buffers(&mut self, device: &mut Device, context: &mut Context) -> Result<(), Error> {
         debug!("Swap buffers on context {:?}", self.context_id);
-        self.validate_context(context)?;
+        self.validate_context(device, context)?;
 
         // Recycle the old front buffer
         if let Some(old_front_buffer) = self.pending_surface.take() {
@@ -156,8 +156,8 @@ impl SwapChainData {
         context: &mut Context,
         other: &mut SwapChainData,
     ) -> Result<(), Error> {
-        self.validate_context(context)?;
-        other.validate_context(context)?;
+        self.validate_context(device, context)?;
+        other.validate_context(device, context)?;
         if let (Some(surface), true) = (
             self.unattached_surface.take(),
             other.unattached_surface.is_none(),
@@ -184,8 +184,8 @@ impl SwapChainData {
         context: &mut Context,
         size: Size2D<i32>,
     ) -> Result<(), Error> {
-        debug!("Resizing context {:?} to {:?}", context.id(), size);
-        self.validate_context(context)?;
+        debug!("Resizing context {:?} to {:?}", device.context_id(context), size);
+        self.validate_context(device, context)?;
         if (size.width < 1) || (size.height < 1) {
             return Err(Error::Failed);
         }
@@ -228,7 +228,7 @@ impl SwapChainData {
         context: &mut Context,
         gl: &Gl,
     ) -> Result<(), Error> {
-        self.validate_context(context)?;
+        self.validate_context(device, context)?;
 
         // Save the current GL state
         let mut bound_fbos = [0, 0];
@@ -287,7 +287,7 @@ impl SwapChainData {
     // Called by the producer.
     // Returns an error if `context` is not the producer context for this swap chain.
     fn destroy(&mut self, device: &mut Device, context: &mut Context) -> Result<(), Error> {
-        self.validate_context(context)?;
+        self.validate_context(device, context)?;
         let surfaces = self
             .pending_surface
             .take()
@@ -391,7 +391,7 @@ impl SwapChain {
         let size = device.context_surface_size(context)?;
         Ok(SwapChain(Arc::new(Mutex::new(SwapChainData {
             size,
-            context_id: context.id(),
+            context_id: device.context_id(context),
             surface_access,
             unattached_surface: None,
             pending_surface: None,
@@ -410,7 +410,7 @@ impl SwapChain {
         let surface = device.create_surface(context, surface_access, &surface_type)?;
         Ok(SwapChain(Arc::new(Mutex::new(SwapChainData {
             size,
-            context_id: context.id(),
+            context_id: device.context_id(context),
             surface_access,
             unattached_surface: Some(surface),
             pending_surface: None,
@@ -474,7 +474,7 @@ impl<SwapChainID: Clone + Eq + Hash + Debug> SwapChains<SwapChainID> {
             }
         };
         self.ids()
-            .entry(context.id())
+            .entry(device.context_id(context))
             .or_insert_with(Default::default)
             .insert(id);
         Ok(())
@@ -500,7 +500,7 @@ impl<SwapChainID: Clone + Eq + Hash + Debug> SwapChains<SwapChainID> {
             )?),
         };
         self.ids()
-            .entry(context.id())
+            .entry(device.context_id(context))
             .or_insert_with(Default::default)
             .insert(id);
         Ok(())
@@ -518,7 +518,7 @@ impl<SwapChainID: Clone + Eq + Hash + Debug> SwapChains<SwapChainID> {
         if let Some(swap_chain) = self.table_mut().remove(&id) {
             swap_chain.destroy(device, context)?;
         }
-        if let Some(ids) = self.ids().get_mut(&context.id()) {
+        if let Some(ids) = self.ids().get_mut(&device.context_id(context)) {
             ids.remove(&id);
         }
         Ok(())
@@ -527,7 +527,7 @@ impl<SwapChainID: Clone + Eq + Hash + Debug> SwapChains<SwapChainID> {
     /// Destroy all the swap chains for a particular producer context.
     /// Called by the producer.
     pub fn destroy_all(&self, device: &mut Device, context: &mut Context) -> Result<(), Error> {
-        if let Some(mut ids) = self.ids().remove(&context.id()) {
+        if let Some(mut ids) = self.ids().remove(&device.context_id(context)) {
             for id in ids.drain() {
                 if let Some(swap_chain) = self.table_mut().remove(&id) {
                     swap_chain.destroy(device, context)?;
@@ -541,11 +541,11 @@ impl<SwapChainID: Clone + Eq + Hash + Debug> SwapChains<SwapChainID> {
     /// Called by the producer.
     pub fn iter(
         &self,
-        _: &mut Device,
+        device: &mut Device,
         context: &mut Context,
     ) -> impl Iterator<Item = (SwapChainID, SwapChain)> {
         self.ids()
-            .get(&context.id())
+            .get(&device.context_id(context))
             .iter()
             .flat_map(|ids| ids.iter())
             .filter_map(|id| Some((id.clone(), self.table().get(id)?.clone())))
