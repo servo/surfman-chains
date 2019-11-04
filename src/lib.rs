@@ -127,7 +127,10 @@ impl SwapChainData {
             }
             None => {
                 debug!("Replacing attached surface");
-                device.replace_context_surface(context, new_back_buffer)?
+                let old_back_buffer = device
+                    .unbind_surface_from_context(context)?;
+                device.bind_surface_to_context(context, new_back_buffer)?;
+                old_back_buffer.unwrap()
             }
         };
 
@@ -162,10 +165,13 @@ impl SwapChainData {
             self.unattached_surface.take(),
             other.unattached_surface.is_none(),
         ) {
+            let old_surface = device.unbind_surface_from_context(context)?;
             debug!("Attaching surface {:?}", surface.id());
-            let surface = device.replace_context_surface(context, surface)?;
-            debug!("Detaching surface {:?}", surface.id());
-            other.unattached_surface = Some(surface);
+            device.bind_surface_to_context(context, surface)?;
+            if let Some(ref old_surface) = old_surface {
+                debug!("Detached surface {:?}", old_surface.id());
+            }
+            other.unattached_surface = old_surface;
             Ok(())
         } else {
             Err(Error::Failed)
@@ -197,10 +203,16 @@ impl SwapChainData {
             self.context_id
         );
         let old_back_buffer = match self.unattached_surface.as_mut() {
-            Some(surface) => mem::replace(surface, new_back_buffer),
-            None => device.replace_context_surface(context, new_back_buffer)?,
+            Some(surface) => Some(mem::replace(surface, new_back_buffer)),
+            None => {
+                let old_surface = device.unbind_surface_from_context(context)?;
+                device.bind_surface_to_context(context, new_back_buffer)?;
+                old_surface
+            }
         };
-        device.destroy_surface(context, old_back_buffer)?;
+        if let Some(old_back_buffer) = old_back_buffer {
+            device.destroy_surface(context, old_back_buffer)?;
+        }
         self.size = size;
         Ok(())
     }
@@ -246,12 +258,16 @@ impl SwapChainData {
 
         // Make the back buffer the current surface
         let reattach = match self.unattached_surface.take() {
-            Some(surface) => Some(device.replace_context_surface(context, surface)?),
+            Some(surface) => {
+                let old_surface = device.unbind_surface_from_context(context)?;
+                device.bind_surface_to_context(context, surface)?;
+                old_surface
+            },
             None => None,
         };
 
         // Clear it
-        let fbo = device.context_surface_framebuffer_object(context)?;
+        let fbo = device.context_surface(context)?.unwrap().framebuffer_object();
         gl.bind_framebuffer(gl::FRAMEBUFFER, fbo);
         gl.clear_color(0., 0., 0., 0.);
         gl.clear_depth(1.);
@@ -261,8 +277,9 @@ impl SwapChainData {
 
         // Reattach the old surface
         if let Some(surface) = reattach {
-            let surface = device.replace_context_surface(context, surface)?;
-            self.unattached_surface = Some(surface);
+            let old_surface = device.unbind_surface_from_context(context)?;
+            device.bind_surface_to_context(context, surface)?;
+            self.unattached_surface = old_surface;
         }
 
         // Restore the GL state
@@ -388,7 +405,7 @@ impl SwapChain {
         context: &mut Context,
         surface_access: SurfaceAccess,
     ) -> Result<SwapChain, Error> {
-        let size = device.context_surface_size(context)?;
+        let size = device.context_surface(context)?.unwrap().size();
         Ok(SwapChain(Arc::new(Mutex::new(SwapChainData {
             size,
             context_id: device.context_id(context),
