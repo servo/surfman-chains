@@ -11,4 +11,7 @@ euclid = "0.20"
 fnv = "1.0"
 log = "0.4"
 sparkle = "0.1"
-surfman = { git = "https://github.com/pcwalton/surfman" }
+
+[dependencies.surfman]
+version = "0.1.0"
+features = ["sm-osmesa"]
