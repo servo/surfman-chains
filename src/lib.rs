@@ -235,13 +235,20 @@ impl SwapChainData {
         let mut clear_color = [0., 0., 0., 0.];
         let mut clear_depth = [0.];
         let mut clear_stencil = [0];
+        let mut color_mask = [0, 0, 0, 0];
+        let mut depth_mask = [0];
+        let mut stencil_mask = [0];
         let scissor_enabled = gl.is_enabled(gl::SCISSOR_TEST);
+        let rasterizer_enabled = gl.is_enabled(gl::RASTERIZER_DISCARD);
         unsafe {
             gl.get_integer_v(gl::DRAW_FRAMEBUFFER_BINDING, &mut bound_fbos[0..]);
             gl.get_integer_v(gl::READ_FRAMEBUFFER_BINDING, &mut bound_fbos[1..]);
             gl.get_float_v(gl::COLOR_CLEAR_VALUE, &mut clear_color[..]);
             gl.get_float_v(gl::DEPTH_CLEAR_VALUE, &mut clear_depth[..]);
             gl.get_integer_v(gl::STENCIL_CLEAR_VALUE, &mut clear_stencil[..]);
+            gl.get_boolean_v(gl::DEPTH_WRITEMASK, &mut depth_mask[..]);
+            gl.get_integer_v(gl::STENCIL_WRITEMASK, &mut stencil_mask[..]);
+            gl.get_boolean_v(gl::COLOR_WRITEMASK, &mut color_mask[..]);
         }
 
         // Make the back buffer the current surface
@@ -257,6 +264,10 @@ impl SwapChainData {
         gl.clear_depth(1.);
         gl.clear_stencil(0);
         gl.disable(gl::SCISSOR_TEST);
+        gl.disable(gl::RASTERIZER_DISCARD);
+        gl.depth_mask(true);
+        gl.stencil_mask(0xFFFFFFFF);
+        gl.color_mask(true, true, true, true);
         gl.clear(gl::COLOR_BUFFER_BIT | gl::DEPTH_BUFFER_BIT | gl::STENCIL_BUFFER_BIT);
 
         // Reattach the old surface
@@ -274,10 +285,21 @@ impl SwapChainData {
             clear_color[2],
             clear_color[3],
         );
+        gl.color_mask(
+            color_mask[0] != 0,
+            color_mask[1] != 0,
+            color_mask[2] != 0,
+            color_mask[3] != 0,
+        );
         gl.clear_depth(clear_depth[0] as f64);
         gl.clear_stencil(clear_stencil[0]);
+        gl.depth_mask(depth_mask[0] != 0);
+        gl.stencil_mask(stencil_mask[0] as gl::GLuint);
         if scissor_enabled {
             gl.enable(gl::SCISSOR_TEST);
+        }
+        if rasterizer_enabled {
+            gl.enable(gl::RASTERIZER_DISCARD);
         }
 
         Ok(())
