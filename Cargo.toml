@@ -1,18 +1,4 @@
-[package]
-name = "surfman-chains"
-version = "0.1.1"
-authors = ["Alan Jeffrey <ajeffrey@mozilla.com>"]
-edition = "2018"
-description = "An implementation of double-buffered swap chains for surfman"
-license = "MPL-2.0"
-repository = "https://github.com/asajeffrey/surfman-chains"
-
-[dependencies]
-euclid = "0.20"
-fnv = "1.0"
-log = "0.4"
-sparkle = "0.1"
-
-[dependencies.surfman]
-version = "0.1.0"
-features = ["sm-osmesa"]
+[workspace]
+members = [
+    "surfman-chains",
+]
