@@ -600,8 +600,9 @@ impl<SwapChainID: Clone + Eq + Hash + Debug> SwapChains<SwapChainID> {
     }
 }
 
-impl<SwapChainID: 'static + Clone + Eq + Hash + Debug + Sync + Send> SwapChainsAPI<SwapChainID>
-    for SwapChains<SwapChainID>
+impl<SwapChainID> SwapChainsAPI<SwapChainID> for SwapChains<SwapChainID>
+where
+    SwapChainID: 'static + Clone + Eq + Hash + Debug + Sync + Send,
 {
     type Surface = Surface;
     type SwapChain = SwapChain;
