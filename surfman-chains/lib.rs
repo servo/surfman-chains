@@ -51,6 +51,9 @@ use surfman::SurfaceAccess;
 use surfman::SurfaceInfo;
 use surfman::SurfaceType;
 
+use surfman_chains_api::SwapChainAPI;
+use surfman_chains_api::SwapChainsAPI;
+
 // The data stored for each swap chain.
 struct SwapChainData {
     // The size of the back buffer
@@ -403,18 +406,6 @@ impl SwapChain {
         self.lock().clear_surface(device, context, gl)
     }
 
-    /// Take the current front buffer.
-    /// Called by a consumer.
-    pub fn take_surface(&self) -> Option<Surface> {
-        self.lock().take_surface()
-    }
-
-    /// Recycle the current front buffer.
-    /// Called by a consumer.
-    pub fn recycle_surface(&self, surface: Surface) {
-        self.lock().recycle_surface(surface)
-    }
-
     /// Is this the attached swap chain?
     pub fn is_attached(&self) -> bool {
         self.lock().unattached_surface.is_none()
@@ -464,6 +455,22 @@ impl SwapChain {
     }
 }
 
+impl SwapChainAPI for SwapChain {
+    type Surface = Surface;
+
+    /// Take the current front buffer.
+    /// Called by a consumer.
+    fn take_surface(&self) -> Option<Surface> {
+        self.lock().take_surface()
+    }
+
+    /// Recycle the current front buffer.
+    /// Called by a consumer.
+    fn recycle_surface(&self, surface: Surface) {
+        self.lock().recycle_surface(surface)
+    }
+}
+
 /// A thread-safe collection of swap chains.
 #[derive(Clone, Default)]
 pub struct SwapChains<SwapChainID: Eq + Hash> {
@@ -495,12 +502,6 @@ impl<SwapChainID: Clone + Eq + Hash + Debug> SwapChains<SwapChainID> {
     // Lock the lookup table for writing
     fn table_mut(&self) -> RwLockWriteGuard<FnvHashMap<SwapChainID, SwapChain>> {
         self.table.write().unwrap_or_else(|err| err.into_inner())
-    }
-
-    /// Get a swap chain
-    pub fn get(&self, id: SwapChainID) -> Option<SwapChain> {
-        debug!("Getting swap chain {:?}", id);
-        self.table().get(&id).cloned()
     }
 
     /// Create a new attached swap chain and insert it in the table.
@@ -596,5 +597,18 @@ impl<SwapChainID: Clone + Eq + Hash + Debug> SwapChains<SwapChainID> {
             .filter_map(|id| Some((id.clone(), self.table().get(id)?.clone())))
             .collect::<Vec<_>>()
             .into_iter()
+    }
+}
+
+impl<SwapChainID: 'static + Clone + Eq + Hash + Debug + Sync + Send> SwapChainsAPI<SwapChainID>
+    for SwapChains<SwapChainID>
+{
+    type Surface = Surface;
+    type SwapChain = SwapChain;
+
+    /// Get a swap chain
+    fn get(&self, id: SwapChainID) -> Option<SwapChain> {
+        debug!("Getting swap chain {:?}", id);
+        self.table().get(&id).cloned()
     }
 }

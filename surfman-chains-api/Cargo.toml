@@ -1,6 +1,6 @@
 [package]
-name = "surfman-chains"
-version = "0.1.1"
+name = "surfman-chains-api"
+version = "0.1.0"
 authors = ["Alan Jeffrey <ajeffrey@mozilla.com>"]
 edition = "2018"
 description = "An implementation of double-buffered swap chains for surfman"
@@ -9,14 +9,3 @@ repository = "https://github.com/asajeffrey/surfman-chains"
 
 [lib]
 path = "lib.rs"
-
-[dependencies]
-euclid = "0.20"
-fnv = "1.0"
-log = "0.4"
-sparkle = "0.1"
-surfman-chains-api = { path = "../surfman-chains-api" }
-
-[dependencies.surfman]
-version = "0.1"
-features = ["sm-osmesa"]
