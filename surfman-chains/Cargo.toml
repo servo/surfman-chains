@@ -1,6 +1,6 @@
 [package]
 name = "surfman-chains"
-version = "0.1.1"
+version = "0.2.0"
 authors = ["Alan Jeffrey <ajeffrey@mozilla.com>"]
 edition = "2018"
 description = "An implementation of double-buffered swap chains for surfman"
@@ -15,7 +15,7 @@ euclid = "0.20"
 fnv = "1.0"
 log = "0.4"
 sparkle = "0.1"
-surfman-chains-api = { path = "../surfman-chains-api" }
+surfman-chains-api = "0.2"
 
 [dependencies.surfman]
 version = "0.1"
