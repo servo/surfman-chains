@@ -222,6 +222,12 @@ impl SwapChainData {
         Ok(())
     }
 
+    // Get the current size.
+    // Called by a consumer.
+    fn size(&self) -> Size2D<i32> {
+        self.size
+    }
+
     // Take the current front buffer.
     // Called by a consumer.
     fn take_surface(&mut self) -> Option<Surface> {
@@ -392,6 +398,12 @@ impl SwapChain {
         size: Size2D<i32>,
     ) -> Result<(), Error> {
         self.lock().resize(device, context, size)
+    }
+
+    /// Get the current size.
+    /// Called by a consumer.
+    pub fn size(&self) -> Size2D<i32> {
+        self.lock().size()
     }
 
     // Clear the current back buffer.
