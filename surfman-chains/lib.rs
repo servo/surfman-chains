@@ -42,9 +42,7 @@ use sparkle::gl;
 use sparkle::gl::GLuint;
 use sparkle::gl::Gl;
 
-use surfman::platform::generic::universal::context::Context;
-use surfman::platform::generic::universal::device::Device;
-use surfman::platform::generic::universal::surface::Surface;
+use surfman::device::Device as DeviceAPI;
 use surfman::ContextID;
 use surfman::Error;
 use surfman::SurfaceAccess;
@@ -55,7 +53,7 @@ use surfman_chains_api::SwapChainAPI;
 use surfman_chains_api::SwapChainsAPI;
 
 // The data stored for each swap chain.
-struct SwapChainData {
+struct SwapChainData<Device: DeviceAPI> {
     // The size of the back buffer
     size: Size2D<i32>,
     // The id of the producer context
@@ -65,16 +63,16 @@ struct SwapChainData {
     // The back buffer of the swap chain.
     // Some if this swap chain is unattached,
     // None if it is attached (and so the context owns the surface).
-    unattached_surface: Option<Surface>,
+    unattached_surface: Option<Device::Surface>,
     // Some if the producing context has finished drawing a new front buffer, ready to be displayed.
-    pending_surface: Option<Surface>,
+    pending_surface: Option<Device::Surface>,
     // All of the surfaces that have already been displayed, ready to be recycled.
-    recycled_surfaces: Vec<Surface>,
+    recycled_surfaces: Vec<Device::Surface>,
 }
 
-impl SwapChainData {
+impl<Device: DeviceAPI> SwapChainData<Device> {
     // Returns `Ok` if `context` is the producer context for this swap chain.
-    fn validate_context(&self, device: &Device, context: &Context) -> Result<(), Error> {
+    fn validate_context(&self, device: &Device, context: &Device::Context) -> Result<(), Error> {
         if self.context_id == device.context_id(context) {
             Ok(())
         } else {
@@ -85,7 +83,11 @@ impl SwapChainData {
     // Swap the back and front buffers.
     // Called by the producer.
     // Returns an error if `context` is not the producer context for this swap chain.
-    fn swap_buffers(&mut self, device: &mut Device, context: &mut Context) -> Result<(), Error> {
+    fn swap_buffers(
+        &mut self,
+        device: &mut Device,
+        context: &mut Device::Context,
+    ) -> Result<(), Error> {
         debug!("Swap buffers on context {:?}", self.context_id);
         self.validate_context(device, context)?;
 
@@ -114,7 +116,7 @@ impl SwapChainData {
                     self.size, self.context_id
                 );
                 let surface_type = SurfaceType::Generic { size: self.size };
-                device.create_surface(context, self.surface_access, &surface_type)
+                device.create_surface(context, self.surface_access, surface_type)
             })?;
 
         // Swap the buffers
@@ -131,7 +133,13 @@ impl SwapChainData {
             None => {
                 debug!("Replacing attached surface");
                 let new_front_buffer = device.unbind_surface_from_context(context)?.unwrap();
-                device.bind_surface_to_context(context, new_back_buffer)?;
+                if let Err((err, mut new_back_buffer)) =
+                    device.bind_surface_to_context(context, new_back_buffer)
+                {
+                    debug!("Oh no, destroying new back buffer");
+                    let _ = device.destroy_surface(context, &mut new_back_buffer);
+                    return Err(err);
+                }
                 new_front_buffer
             }
         };
@@ -143,9 +151,9 @@ impl SwapChainData {
             self.context_id
         );
         self.pending_surface = Some(new_front_buffer);
-        for surface in self.recycled_surfaces.drain(..) {
+        for mut surface in self.recycled_surfaces.drain(..) {
             debug!("Destroying a surface for context {:?}", self.context_id);
-            device.destroy_surface(context, surface)?;
+            device.destroy_surface(context, &mut surface)?;
         }
 
         Ok(())
@@ -158,8 +166,8 @@ impl SwapChainData {
     fn take_attachment_from(
         &mut self,
         device: &mut Device,
-        context: &mut Context,
-        other: &mut SwapChainData,
+        context: &mut Device::Context,
+        other: &mut SwapChainData<Device>,
     ) -> Result<(), Error> {
         self.validate_context(device, context)?;
         other.validate_context(device, context)?;
@@ -169,7 +177,11 @@ impl SwapChainData {
         ) {
             debug!("Attaching surface {:?}", device.surface_info(&surface).id);
             let old_surface = device.unbind_surface_from_context(context)?.unwrap();
-            device.bind_surface_to_context(context, surface)?;
+            if let Err((err, mut surface)) = device.bind_surface_to_context(context, surface) {
+                debug!("Oh no, destroying surface");
+                let _ = device.destroy_surface(context, &mut surface);
+                return Err(err);
+            }
             debug!(
                 "Detaching surface {:?}",
                 device.surface_info(&old_surface).id
@@ -190,7 +202,7 @@ impl SwapChainData {
     fn resize(
         &mut self,
         device: &mut Device,
-        context: &mut Context,
+        context: &mut Device::Context,
         size: Size2D<i32>,
     ) -> Result<(), Error> {
         debug!(
@@ -203,21 +215,27 @@ impl SwapChainData {
             return Err(Error::Failed);
         }
         let surface_type = SurfaceType::Generic { size };
-        let new_back_buffer = device.create_surface(context, self.surface_access, &surface_type)?;
+        let new_back_buffer = device.create_surface(context, self.surface_access, surface_type)?;
         debug!(
             "Surface {:?} is the new back buffer for context {:?}",
             device.surface_info(&new_back_buffer).id,
             self.context_id
         );
-        let old_back_buffer = match self.unattached_surface.as_mut() {
+        let mut old_back_buffer = match self.unattached_surface.as_mut() {
             Some(surface) => mem::replace(surface, new_back_buffer),
             None => {
                 let old_back_buffer = device.unbind_surface_from_context(context)?.unwrap();
-                device.bind_surface_to_context(context, new_back_buffer)?;
+                if let Err((err, mut new_back_buffer)) =
+                    device.bind_surface_to_context(context, new_back_buffer)
+                {
+                    debug!("Oh no, destroying new back buffer");
+                    let _ = device.destroy_surface(context, &mut new_back_buffer);
+                    return Err(err);
+                }
                 old_back_buffer
             }
         };
-        device.destroy_surface(context, old_back_buffer)?;
+        device.destroy_surface(context, &mut old_back_buffer)?;
         self.size = size;
         Ok(())
     }
@@ -230,7 +248,7 @@ impl SwapChainData {
 
     // Take the current front buffer.
     // Called by a consumer.
-    fn take_surface(&mut self) -> Option<Surface> {
+    fn take_surface(&mut self) -> Option<Device::Surface> {
         self.pending_surface
             .take()
             .or_else(|| self.recycled_surfaces.pop())
@@ -238,7 +256,7 @@ impl SwapChainData {
 
     // Recycle the current front buffer.
     // Called by a consumer.
-    fn recycle_surface(&mut self, surface: Surface) {
+    fn recycle_surface(&mut self, surface: Device::Surface) {
         self.recycled_surfaces.push(surface)
     }
 
@@ -248,7 +266,7 @@ impl SwapChainData {
     fn clear_surface(
         &mut self,
         device: &mut Device,
-        context: &mut Context,
+        context: &mut Device::Context,
         gl: &Gl,
     ) -> Result<(), Error> {
         self.validate_context(device, context)?;
@@ -278,7 +296,14 @@ impl SwapChainData {
         let reattach = match self.unattached_surface.take() {
             Some(surface) => {
                 let reattach = device.unbind_surface_from_context(context)?;
-                device.bind_surface_to_context(context, surface)?;
+                if let Err((err, mut surface)) = device.bind_surface_to_context(context, surface) {
+                    debug!("Oh no, destroying surfaces");
+                    let _ = device.destroy_surface(context, &mut surface);
+                    if let Some(mut reattach) = reattach {
+                        let _ = device.destroy_surface(context, &mut reattach);
+                    }
+                    return Err(err);
+                }
                 reattach
             }
             None => None,
@@ -304,7 +329,11 @@ impl SwapChainData {
         // Reattach the old surface
         if let Some(surface) = reattach {
             let old_surface = device.unbind_surface_from_context(context)?.unwrap();
-            device.bind_surface_to_context(context, surface)?;
+            if let Err((err, mut surface)) = device.bind_surface_to_context(context, surface) {
+                debug!("Oh no, destroying surface");
+                let _ = device.destroy_surface(context, &mut surface);
+                return Err(err);
+            }
             self.unattached_surface = Some(old_surface);
         }
 
@@ -340,7 +369,7 @@ impl SwapChainData {
     // Destroy the swap chain.
     // Called by the producer.
     // Returns an error if `context` is not the producer context for this swap chain.
-    fn destroy(&mut self, device: &mut Device, context: &mut Context) -> Result<(), Error> {
+    fn destroy(&mut self, device: &mut Device, context: &mut Device::Context) -> Result<(), Error> {
         self.validate_context(device, context)?;
         let surfaces = self
             .pending_surface
@@ -348,27 +377,37 @@ impl SwapChainData {
             .into_iter()
             .chain(self.unattached_surface.take().into_iter())
             .chain(self.recycled_surfaces.drain(..));
-        for surface in surfaces {
-            device.destroy_surface(context, surface)?;
+        for mut surface in surfaces {
+            device.destroy_surface(context, &mut surface)?;
         }
         Ok(())
     }
 }
 
 /// A thread-safe swap chain.
-#[derive(Clone)]
-pub struct SwapChain(Arc<Mutex<SwapChainData>>);
+pub struct SwapChain<Device: DeviceAPI>(Arc<Mutex<SwapChainData<Device>>>);
 
-impl SwapChain {
+// We can't derive Clone unfortunately
+impl<Device: DeviceAPI> Clone for SwapChain<Device> {
+    fn clone(&self) -> Self {
+        SwapChain(self.0.clone())
+    }
+}
+
+impl<Device: DeviceAPI> SwapChain<Device> {
     // Guarantee unique access to the swap chain data
-    fn lock(&self) -> MutexGuard<SwapChainData> {
+    fn lock(&self) -> MutexGuard<SwapChainData<Device>> {
         self.0.lock().unwrap_or_else(|err| err.into_inner())
     }
 
     /// Swap the back and front buffers.
     /// Called by the producer.
     /// Returns an error if `context` is not the producer context for this swap chain.
-    pub fn swap_buffers(&self, device: &mut Device, context: &mut Context) -> Result<(), Error> {
+    pub fn swap_buffers(
+        &self,
+        device: &mut Device,
+        context: &mut Device::Context,
+    ) -> Result<(), Error> {
         self.lock().swap_buffers(device, context)
     }
 
@@ -379,8 +418,8 @@ impl SwapChain {
     pub fn take_attachment_from(
         &self,
         device: &mut Device,
-        context: &mut Context,
-        other: &SwapChain,
+        context: &mut Device::Context,
+        other: &SwapChain<Device>,
     ) -> Result<(), Error> {
         self.lock()
             .take_attachment_from(device, context, &mut *other.lock())
@@ -394,7 +433,7 @@ impl SwapChain {
     pub fn resize(
         &self,
         device: &mut Device,
-        context: &mut Context,
+        context: &mut Device::Context,
         size: Size2D<i32>,
     ) -> Result<(), Error> {
         self.lock().resize(device, context, size)
@@ -412,7 +451,7 @@ impl SwapChain {
     pub fn clear_surface(
         &self,
         device: &mut Device,
-        context: &mut Context,
+        context: &mut Device::Context,
         gl: &Gl,
     ) -> Result<(), Error> {
         self.lock().clear_surface(device, context, gl)
@@ -426,16 +465,16 @@ impl SwapChain {
     /// Destroy the swap chain.
     /// Called by the producer.
     /// Returns an error if `context` is not the producer context for this swap chain.
-    pub fn destroy(&self, device: &mut Device, context: &mut Context) -> Result<(), Error> {
+    pub fn destroy(&self, device: &mut Device, context: &mut Device::Context) -> Result<(), Error> {
         self.lock().destroy(device, context)
     }
 
     /// Create a new attached swap chain
     pub fn create_attached(
         device: &mut Device,
-        context: &mut Context,
+        context: &mut Device::Context,
         surface_access: SurfaceAccess,
-    ) -> Result<SwapChain, Error> {
+    ) -> Result<SwapChain<Device>, Error> {
         let size = device.context_surface_info(context).unwrap().unwrap().size;
         Ok(SwapChain(Arc::new(Mutex::new(SwapChainData {
             size,
@@ -450,12 +489,12 @@ impl SwapChain {
     /// Create a new detached swap chain
     pub fn create_detached(
         device: &mut Device,
-        context: &mut Context,
+        context: &mut Device::Context,
         surface_access: SurfaceAccess,
         size: Size2D<i32>,
-    ) -> Result<SwapChain, Error> {
+    ) -> Result<SwapChain<Device>, Error> {
         let surface_type = SurfaceType::Generic { size };
-        let surface = device.create_surface(context, surface_access, &surface_type)?;
+        let surface = device.create_surface(context, surface_access, surface_type)?;
         Ok(SwapChain(Arc::new(Mutex::new(SwapChainData {
             size,
             context_id: device.context_id(context),
@@ -467,34 +506,52 @@ impl SwapChain {
     }
 }
 
-impl SwapChainAPI for SwapChain {
-    type Surface = Surface;
+impl<Device> SwapChainAPI for SwapChain<Device>
+where
+    Device: 'static + DeviceAPI,
+    Device::Surface: Send,
+{
+    type Surface = Device::Surface;
 
     /// Take the current front buffer.
     /// Called by a consumer.
-    fn take_surface(&self) -> Option<Surface> {
+    fn take_surface(&self) -> Option<Device::Surface> {
         self.lock().take_surface()
     }
 
     /// Recycle the current front buffer.
     /// Called by a consumer.
-    fn recycle_surface(&self, surface: Surface) {
+    fn recycle_surface(&self, surface: Device::Surface) {
         self.lock().recycle_surface(surface)
     }
 }
 
 /// A thread-safe collection of swap chains.
-#[derive(Clone, Default)]
-pub struct SwapChains<SwapChainID: Eq + Hash> {
+#[derive(Default)]
+pub struct SwapChains<SwapChainID: Eq + Hash, Device: DeviceAPI> {
     // The swap chain ids, indexed by context id
     ids: Arc<Mutex<FnvHashMap<ContextID, FnvHashSet<SwapChainID>>>>,
     // The swap chains, indexed by swap chain id
-    table: Arc<RwLock<FnvHashMap<SwapChainID, SwapChain>>>,
+    table: Arc<RwLock<FnvHashMap<SwapChainID, SwapChain<Device>>>>,
 }
 
-impl<SwapChainID: Clone + Eq + Hash + Debug> SwapChains<SwapChainID> {
+// We can't derive Clone unfortunately
+impl<SwapChainID: Eq + Hash, Device: DeviceAPI> Clone for SwapChains<SwapChainID, Device> {
+    fn clone(&self) -> Self {
+        SwapChains {
+            ids: self.ids.clone(),
+            table: self.table.clone(),
+        }
+    }
+}
+
+impl<SwapChainID, Device> SwapChains<SwapChainID, Device>
+where
+    SwapChainID: Clone + Eq + Hash + Debug,
+    Device: DeviceAPI,
+{
     /// Create a new collection.
-    pub fn new() -> SwapChains<SwapChainID> {
+    pub fn new() -> SwapChains<SwapChainID, Device> {
         SwapChains {
             ids: Arc::new(Mutex::new(FnvHashMap::default())),
             table: Arc::new(RwLock::new(FnvHashMap::default())),
@@ -507,12 +564,12 @@ impl<SwapChainID: Clone + Eq + Hash + Debug> SwapChains<SwapChainID> {
     }
 
     // Lock the lookup table
-    fn table(&self) -> RwLockReadGuard<FnvHashMap<SwapChainID, SwapChain>> {
+    fn table(&self) -> RwLockReadGuard<FnvHashMap<SwapChainID, SwapChain<Device>>> {
         self.table.read().unwrap_or_else(|err| err.into_inner())
     }
 
     // Lock the lookup table for writing
-    fn table_mut(&self) -> RwLockWriteGuard<FnvHashMap<SwapChainID, SwapChain>> {
+    fn table_mut(&self) -> RwLockWriteGuard<FnvHashMap<SwapChainID, SwapChain<Device>>> {
         self.table.write().unwrap_or_else(|err| err.into_inner())
     }
 
@@ -522,7 +579,7 @@ impl<SwapChainID: Clone + Eq + Hash + Debug> SwapChains<SwapChainID> {
         &self,
         id: SwapChainID,
         device: &mut Device,
-        context: &mut Context,
+        context: &mut Device::Context,
         surface_access: SurfaceAccess,
     ) -> Result<(), Error> {
         match self.table_mut().entry(id.clone()) {
@@ -545,7 +602,7 @@ impl<SwapChainID: Clone + Eq + Hash + Debug> SwapChains<SwapChainID> {
         id: SwapChainID,
         size: Size2D<i32>,
         device: &mut Device,
-        context: &mut Context,
+        context: &mut Device::Context,
         surface_access: SurfaceAccess,
     ) -> Result<(), Error> {
         match self.table_mut().entry(id.clone()) {
@@ -571,7 +628,7 @@ impl<SwapChainID: Clone + Eq + Hash + Debug> SwapChains<SwapChainID> {
         &self,
         id: SwapChainID,
         device: &mut Device,
-        context: &mut Context,
+        context: &mut Device::Context,
     ) -> Result<(), Error> {
         if let Some(swap_chain) = self.table_mut().remove(&id) {
             swap_chain.destroy(device, context)?;
@@ -584,7 +641,11 @@ impl<SwapChainID: Clone + Eq + Hash + Debug> SwapChains<SwapChainID> {
 
     /// Destroy all the swap chains for a particular producer context.
     /// Called by the producer.
-    pub fn destroy_all(&self, device: &mut Device, context: &mut Context) -> Result<(), Error> {
+    pub fn destroy_all(
+        &self,
+        device: &mut Device,
+        context: &mut Device::Context,
+    ) -> Result<(), Error> {
         if let Some(mut ids) = self.ids().remove(&device.context_id(context)) {
             for id in ids.drain() {
                 if let Some(swap_chain) = self.table_mut().remove(&id) {
@@ -600,8 +661,8 @@ impl<SwapChainID: Clone + Eq + Hash + Debug> SwapChains<SwapChainID> {
     pub fn iter(
         &self,
         device: &mut Device,
-        context: &mut Context,
-    ) -> impl Iterator<Item = (SwapChainID, SwapChain)> {
+        context: &mut Device::Context,
+    ) -> impl Iterator<Item = (SwapChainID, SwapChain<Device>)> {
         self.ids()
             .get(&device.context_id(context))
             .iter()
@@ -612,15 +673,17 @@ impl<SwapChainID: Clone + Eq + Hash + Debug> SwapChains<SwapChainID> {
     }
 }
 
-impl<SwapChainID> SwapChainsAPI<SwapChainID> for SwapChains<SwapChainID>
+impl<SwapChainID, Device> SwapChainsAPI<SwapChainID> for SwapChains<SwapChainID, Device>
 where
     SwapChainID: 'static + Clone + Eq + Hash + Debug + Sync + Send,
+    Device: 'static + DeviceAPI,
+    Device::Surface: Send,
 {
-    type Surface = Surface;
-    type SwapChain = SwapChain;
+    type Surface = Device::Surface;
+    type SwapChain = SwapChain<Device>;
 
     /// Get a swap chain
-    fn get(&self, id: SwapChainID) -> Option<SwapChain> {
+    fn get(&self, id: SwapChainID) -> Option<SwapChain<Device>> {
         debug!("Getting swap chain {:?}", id);
         self.table().get(&id).cloned()
     }
