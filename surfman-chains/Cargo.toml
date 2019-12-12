@@ -6,6 +6,7 @@ edition = "2018"
 description = "An implementation of double-buffered swap chains for surfman"
 license = "MPL-2.0"
 repository = "https://github.com/asajeffrey/surfman-chains"
+publish = false
 
 [lib]
 path = "lib.rs"
@@ -16,7 +17,4 @@ fnv = "1.0"
 log = "0.4"
 sparkle = "0.1"
 surfman-chains-api = "0.2"
-
-[dependencies.surfman]
-version = "0.1"
-features = ["sm-osmesa"]
+surfman = { git = "https://github.com/pcwalton/surfman", branch = "multi" }
