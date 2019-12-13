@@ -14,5 +14,4 @@ before_script:
 
 script:
   - cargo fmt -- --check
-  - cd surfman-chains
-  - cargo build --features=surfman/sm-osmesa
+  - cargo build
