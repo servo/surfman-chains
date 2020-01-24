@@ -54,22 +54,64 @@ use surfman::SurfaceType;
 use surfman_chains_api::SwapChainAPI;
 use surfman_chains_api::SwapChainsAPI;
 
+/// An abstract swapchain backend that is responsible for managing surfaces
+/// used by that swapchain.
+pub trait SurfaceProvider {
+    /// A notification that any previous front buffer can be recycled.
+    fn recycle_front_buffer(&mut self, device: &mut Device, context_id: ContextID);
+
+    /// A notification to recycle the provided surface.
+    fn recycle_surface(&mut self, surface: Surface);
+
+    /// The swapchain requires a new surface.
+    fn provide_surface(
+        &mut self,
+        device: &mut Device,
+        context: &mut Context,
+        context_id: ContextID,
+        size: Size2D<i32>,
+    ) -> Result<Surface, Error>;
+
+    /// Obtain the current front buffer surface from this provider.
+    fn take_front_buffer(&mut self) -> Option<Surface>;
+
+    /// Inform the provider of the new front buffer surface.
+    fn set_front_buffer(
+        &mut self,
+        device: &mut Device,
+        context: &mut Context,
+        context_id: ContextID,
+        new_front_buffer: Surface,
+    ) -> Result<(), Error>;
+
+    /// Return a new surface with the desired size.
+    fn create_sized_surface(
+        &mut self,
+        device: &mut Device,
+        context: &mut Context,
+        size: Size2D<i32>,
+    ) -> Result<Surface, Error>;
+
+    /// Ensure any outstanding tracked surfaces are appropriately destroyed.
+    fn destroy_all_surfaces(
+        &mut self,
+        device: &mut Device,
+        context: &mut Context,
+    ) -> Result<(), Error>;
+}
+
 // The data stored for each swap chain.
 struct SwapChainData {
+    // The backend that provides surfaces for this swapchain.
+    surface_provider: Box<dyn SurfaceProvider + Send>,
     // The size of the back buffer
     size: Size2D<i32>,
     // The id of the producer context
     context_id: ContextID,
-    // The surface access mode for the context.
-    surface_access: SurfaceAccess,
     // The back buffer of the swap chain.
     // Some if this swap chain is unattached,
     // None if it is attached (and so the context owns the surface).
     unattached_surface: Option<Surface>,
-    // Some if the producing context has finished drawing a new front buffer, ready to be displayed.
-    pending_surface: Option<Surface>,
-    // All of the surfaces that have already been displayed, ready to be recycled.
-    recycled_surfaces: Vec<Surface>,
 }
 
 impl SwapChainData {
@@ -90,32 +132,13 @@ impl SwapChainData {
         self.validate_context(device, context)?;
 
         // Recycle the old front buffer
-        if let Some(old_front_buffer) = self.pending_surface.take() {
-            let SurfaceInfo { id, size, .. } = device.surface_info(&old_front_buffer);
-            debug!(
-                "Recycling surface {:?} ({:?}) for context {:?}",
-                id, size, self.context_id
-            );
-            self.recycle_surface(old_front_buffer);
-        }
+        self.surface_provider
+            .recycle_front_buffer(device, self.context_id);
 
         // Fetch a new back buffer, recycling presented buffers if possible.
-        let new_back_buffer = self
-            .recycled_surfaces
-            .iter()
-            .position(|surface| device.surface_info(surface).size == self.size)
-            .map(|index| {
-                debug!("Recyling surface for context {:?}", self.context_id);
-                Ok(self.recycled_surfaces.swap_remove(index))
-            })
-            .unwrap_or_else(|| {
-                debug!(
-                    "Creating a new surface ({:?}) for context {:?}",
-                    self.size, self.context_id
-                );
-                let surface_type = SurfaceType::Generic { size: self.size };
-                device.create_surface(context, self.surface_access, &surface_type)
-            })?;
+        let new_back_buffer =
+            self.surface_provider
+                .provide_surface(device, context, self.context_id, self.size)?;
 
         // Swap the buffers
         debug!(
@@ -142,11 +165,12 @@ impl SwapChainData {
             device.surface_info(&new_front_buffer).id,
             self.context_id
         );
-        self.pending_surface = Some(new_front_buffer);
-        for surface in self.recycled_surfaces.drain(..) {
-            debug!("Destroying a surface for context {:?}", self.context_id);
-            device.destroy_surface(context, surface)?;
-        }
+        self.surface_provider.set_front_buffer(
+            device,
+            context,
+            self.context_id,
+            new_front_buffer,
+        )?;
 
         Ok(())
     }
@@ -202,8 +226,9 @@ impl SwapChainData {
         if (size.width < 1) || (size.height < 1) {
             return Err(Error::Failed);
         }
-        let surface_type = SurfaceType::Generic { size };
-        let new_back_buffer = device.create_surface(context, self.surface_access, &surface_type)?;
+        let new_back_buffer = self
+            .surface_provider
+            .create_sized_surface(device, context, size)?;
         debug!(
             "Surface {:?} is the new back buffer for context {:?}",
             device.surface_info(&new_back_buffer).id,
@@ -231,15 +256,7 @@ impl SwapChainData {
     // Take the current front buffer.
     // Called by a consumer.
     fn take_surface(&mut self) -> Option<Surface> {
-        self.pending_surface
-            .take()
-            .or_else(|| self.recycled_surfaces.pop())
-    }
-
-    // Recycle the current front buffer.
-    // Called by a consumer.
-    fn recycle_surface(&mut self, surface: Surface) {
-        self.recycled_surfaces.push(surface)
+        self.surface_provider.take_front_buffer()
     }
 
     // Clear the current back buffer.
@@ -342,16 +359,16 @@ impl SwapChainData {
     // Returns an error if `context` is not the producer context for this swap chain.
     fn destroy(&mut self, device: &mut Device, context: &mut Context) -> Result<(), Error> {
         self.validate_context(device, context)?;
-        let surfaces = self
-            .pending_surface
-            .take()
-            .into_iter()
-            .chain(self.unattached_surface.take().into_iter())
-            .chain(self.recycled_surfaces.drain(..));
-        for surface in surfaces {
+        for surface in self.unattached_surface.take().into_iter() {
             device.destroy_surface(context, surface)?;
         }
+        self.surface_provider
+            .destroy_all_surfaces(device, context)?;
         Ok(())
+    }
+
+    fn recycle_surface(&mut self, surface: Surface) {
+        self.surface_provider.recycle_surface(surface);
     }
 }
 
@@ -434,16 +451,14 @@ impl SwapChain {
     pub fn create_attached(
         device: &mut Device,
         context: &mut Context,
-        surface_access: SurfaceAccess,
+        surface_provider: Box<dyn SurfaceProvider + Send>,
     ) -> Result<SwapChain, Error> {
         let size = device.context_surface_info(context).unwrap().unwrap().size;
         Ok(SwapChain(Arc::new(Mutex::new(SwapChainData {
             size,
             context_id: device.context_id(context),
-            surface_access,
             unattached_surface: None,
-            pending_surface: None,
-            recycled_surfaces: Vec::new(),
+            surface_provider,
         }))))
     }
 
@@ -451,18 +466,16 @@ impl SwapChain {
     pub fn create_detached(
         device: &mut Device,
         context: &mut Context,
-        surface_access: SurfaceAccess,
+        mut surface_provider: Box<dyn SurfaceProvider + Send>,
         size: Size2D<i32>,
     ) -> Result<SwapChain, Error> {
-        let surface_type = SurfaceType::Generic { size };
-        let surface = device.create_surface(context, surface_access, &surface_type)?;
+        let surface =
+            surface_provider.provide_surface(device, context, device.context_id(context), size)?;
         Ok(SwapChain(Arc::new(Mutex::new(SwapChainData {
+            surface_provider,
             size,
             context_id: device.context_id(context),
-            surface_access,
             unattached_surface: Some(surface),
-            pending_surface: None,
-            recycled_surfaces: Vec::new(),
         }))))
     }
 }
@@ -480,6 +493,116 @@ impl SwapChainAPI for SwapChain {
     /// Called by a consumer.
     fn recycle_surface(&self, surface: Surface) {
         self.lock().recycle_surface(surface)
+    }
+}
+
+pub struct SurfmanProvider {
+    // The surface access mode for the context.
+    surface_access: SurfaceAccess,
+    // Some if the producing context has finished drawing a new front buffer, ready to be displayed.
+    pending_surface: Option<Surface>,
+    // All of the surfaces that have already been displayed, ready to be recycled.
+    recycled_surfaces: Vec<Surface>,
+}
+
+impl SurfmanProvider {
+    pub fn new(surface_access: SurfaceAccess) -> Self {
+        Self {
+            surface_access,
+            pending_surface: None,
+            recycled_surfaces: vec![],
+        }
+    }
+}
+
+impl SurfaceProvider for SurfmanProvider {
+    fn recycle_front_buffer(&mut self, device: &mut Device, context_id: ContextID) {
+        if let Some(old_front_buffer) = self.pending_surface.take() {
+            let SurfaceInfo { id, size, .. } = device.surface_info(&old_front_buffer);
+            debug!(
+                "Recycling surface {:?} ({:?}) for context {:?}",
+                id, size, context_id
+            );
+            self.recycle_surface(old_front_buffer);
+        }
+    }
+
+    // Recycle the current front buffer.
+    // Called by a consumer.
+    fn recycle_surface(&mut self, surface: Surface) {
+        self.recycled_surfaces.push(surface)
+    }
+
+    fn provide_surface(
+        &mut self,
+        device: &mut Device,
+        context: &mut Context,
+        context_id: ContextID,
+        size: Size2D<i32>,
+    ) -> Result<Surface, Error> {
+        self.recycled_surfaces
+            .iter()
+            .position(|surface| device.surface_info(surface).size == size)
+            .map(|index| {
+                debug!("Recyling surface for context {:?}", context_id);
+                Ok(self.recycled_surfaces.swap_remove(index))
+            })
+            .unwrap_or_else(|| {
+                debug!(
+                    "Creating a new surface ({:?}) for context {:?}",
+                    size, context_id
+                );
+                let surface_type = SurfaceType::Generic { size: size };
+                device.create_surface(context, self.surface_access, &surface_type)
+            })
+    }
+
+    fn take_front_buffer(&mut self) -> Option<Surface> {
+        self.pending_surface
+            .take()
+            .or_else(|| self.recycled_surfaces.pop())
+    }
+
+    fn set_front_buffer(
+        &mut self,
+        device: &mut Device,
+        context: &mut Context,
+        context_id: ContextID,
+        new_front_buffer: Surface,
+    ) -> Result<(), Error> {
+        self.pending_surface = Some(new_front_buffer);
+        for surface in self.recycled_surfaces.drain(..) {
+            debug!("Destroying a surface for context {:?}", context_id);
+            device.destroy_surface(context, surface)?;
+        }
+        Ok(())
+    }
+
+    fn create_sized_surface(
+        &mut self,
+        device: &mut Device,
+        context: &mut Context,
+        size: Size2D<i32>,
+    ) -> Result<Surface, Error> {
+        let surface_type = SurfaceType::Generic { size };
+        let new_back_buffer = device.create_surface(context, self.surface_access, &surface_type)?;
+        Ok(new_back_buffer)
+    }
+
+    fn destroy_all_surfaces(
+        &mut self,
+        device: &mut Device,
+        context: &mut Context,
+    ) -> Result<(), Error> {
+        let surfaces = self
+            .pending_surface
+            .take()
+            .into_iter()
+            .chain(self.recycled_surfaces.drain(..));
+        for surface in surfaces {
+            device.destroy_surface(context, surface)?;
+        }
+        Ok(())
     }
 }
 
@@ -523,13 +646,15 @@ impl<SwapChainID: Clone + Eq + Hash + Debug> SwapChains<SwapChainID> {
         id: SwapChainID,
         device: &mut Device,
         context: &mut Context,
-        surface_access: SurfaceAccess,
+        surface_provider: Box<dyn SurfaceProvider + Send>,
     ) -> Result<(), Error> {
         match self.table_mut().entry(id.clone()) {
             Entry::Occupied(_) => Err(Error::Failed)?,
-            Entry::Vacant(entry) => {
-                entry.insert(SwapChain::create_attached(device, context, surface_access)?)
-            }
+            Entry::Vacant(entry) => entry.insert(SwapChain::create_attached(
+                device,
+                context,
+                surface_provider,
+            )?),
         };
         self.ids()
             .entry(device.context_id(context))
@@ -546,14 +671,14 @@ impl<SwapChainID: Clone + Eq + Hash + Debug> SwapChains<SwapChainID> {
         size: Size2D<i32>,
         device: &mut Device,
         context: &mut Context,
-        surface_access: SurfaceAccess,
+        surface_provider: Box<dyn SurfaceProvider + Send>,
     ) -> Result<(), Error> {
         match self.table_mut().entry(id.clone()) {
             Entry::Occupied(_) => Err(Error::Failed)?,
             Entry::Vacant(entry) => entry.insert(SwapChain::create_detached(
                 device,
                 context,
-                surface_access,
+                surface_provider,
                 size,
             )?),
         };
