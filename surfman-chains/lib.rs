@@ -280,6 +280,7 @@ impl<Device: DeviceAPI> SwapChainData<Device> {
         device: &mut Device,
         context: &mut Device::Context,
         gl: &Gl,
+        color: [f32; 4],
     ) -> Result<(), Error> {
         self.validate_context(device, context)?;
 
@@ -328,7 +329,7 @@ impl<Device: DeviceAPI> SwapChainData<Device> {
             .unwrap()
             .framebuffer_object;
         gl.bind_framebuffer(gl::FRAMEBUFFER, fbo);
-        gl.clear_color(0., 0., 0., 0.);
+        gl.clear_color(color[0], color[1], color[2], color[3]);
         gl.clear_depth(1.);
         gl.clear_stencil(0);
         gl.disable(gl::SCISSOR_TEST);
@@ -465,8 +466,9 @@ impl<Device: DeviceAPI> SwapChain<Device> {
         device: &mut Device,
         context: &mut Device::Context,
         gl: &Gl,
+        color: [f32; 4],
     ) -> Result<(), Error> {
-        self.lock().clear_surface(device, context, gl)
+        self.lock().clear_surface(device, context, gl, color)
     }
 
     /// Is this the attached swap chain?
