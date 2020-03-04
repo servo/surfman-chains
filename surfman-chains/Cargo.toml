@@ -1,6 +1,6 @@
 [package]
 name = "surfman-chains"
-version = "0.2.1"
+version = "0.3.0"
 authors = ["Alan Jeffrey <ajeffrey@mozilla.com>"]
 edition = "2018"
 description = "An implementation of double-buffered swap chains for surfman"
