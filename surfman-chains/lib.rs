@@ -135,7 +135,9 @@ impl<Device: DeviceAPI> SwapChainData<Device> {
         self.surface_provider.recycle_front_buffer(device);
 
         // Fetch a new back buffer, recycling presented buffers if possible.
-        let new_back_buffer = self.surface_provider.provide_surface(device, context, self.size)?;
+        let new_back_buffer = self
+            .surface_provider
+            .provide_surface(device, context, self.size)?;
 
         // Swap the buffers
         debug!(
@@ -168,11 +170,8 @@ impl<Device: DeviceAPI> SwapChainData<Device> {
             device.surface_info(&new_front_buffer).id,
             self.context_id
         );
-        self.surface_provider.set_front_buffer(
-            device,
-            context,
-            new_front_buffer,
-        )?;
+        self.surface_provider
+            .set_front_buffer(device, context, new_front_buffer)?;
 
         Ok(())
     }
