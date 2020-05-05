@@ -49,8 +49,8 @@ use surfman::SurfaceAccess;
 use surfman::SurfaceInfo;
 use surfman::SurfaceType;
 
-use surfman_chains_api::SwapChainAPI;
-use surfman_chains_api::SwapChainsAPI;
+pub use surfman_chains_api::SwapChainAPI;
+pub use surfman_chains_api::SwapChainsAPI;
 
 // The data stored for each swap chain.
 struct SwapChainData<Device: DeviceAPI> {
