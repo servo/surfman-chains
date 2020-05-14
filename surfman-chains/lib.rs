@@ -61,13 +61,83 @@ struct SwapChainData<Device: DeviceAPI> {
     // The surface access mode for the context.
     surface_access: SurfaceAccess,
     // The back buffer of the swap chain.
-    // Some if this swap chain is unattached,
-    // None if it is attached (and so the context owns the surface).
-    unattached_surface: Option<Device::Surface>,
+    back_buffer: BackBuffer<Device>,
     // Some if the producing context has finished drawing a new front buffer, ready to be displayed.
     pending_surface: Option<Device::Surface>,
     // All of the surfaces that have already been displayed, ready to be recycled.
     recycled_surfaces: Vec<Device::Surface>,
+}
+
+enum BackBuffer<Device: DeviceAPI> {
+    Attached,
+    Detached(Device::Surface),
+    TakenAttached,
+    TakenDetached,
+}
+
+impl<Device: DeviceAPI> BackBuffer<Device> {
+    fn take_surface(
+        &mut self,
+        device: &Device,
+        context: &mut Device::Context,
+    ) -> Result<Device::Surface, Error> {
+        let new_back_buffer = match self {
+            BackBuffer::Attached => BackBuffer::TakenAttached,
+            BackBuffer::Detached(_) => BackBuffer::TakenDetached,
+            _ => return Err(Error::Failed),
+        };
+        let surface = match mem::replace(self, new_back_buffer) {
+            BackBuffer::Attached => device.unbind_surface_from_context(context)?.unwrap(),
+            BackBuffer::Detached(surface) => surface,
+            _ => unreachable!(),
+        };
+        Ok(surface)
+    }
+    fn take_surface_texture(
+        &mut self,
+        device: &Device,
+        context: &mut Device::Context,
+    ) -> Result<Device::SurfaceTexture, Error> {
+        let surface = self.take_surface(device, context)?;
+        device
+            .create_surface_texture(context, surface)
+            .map_err(|(err, surface)| {
+                let _ = self.replace_surface(device, context, surface);
+                err
+            })
+    }
+    fn replace_surface(
+        &mut self,
+        device: &Device,
+        context: &mut Device::Context,
+        surface: Device::Surface,
+    ) -> Result<(), Error> {
+        let new_back_buffer = match self {
+            BackBuffer::TakenAttached => {
+                if let Err((err, mut surface)) = device.bind_surface_to_context(context, surface) {
+                    debug!("Oh no, destroying surface");
+                    let _ = device.destroy_surface(context, &mut surface);
+                    return Err(err);
+                }
+                BackBuffer::Attached
+            }
+            BackBuffer::TakenDetached => BackBuffer::Detached(surface),
+            _ => return Err(Error::Failed),
+        };
+        *self = new_back_buffer;
+        Ok(())
+    }
+    fn replace_surface_texture(
+        &mut self,
+        device: &Device,
+        context: &mut Device::Context,
+        surface_texture: Device::SurfaceTexture,
+    ) -> Result<(), Error> {
+        let surface = device
+            .destroy_surface_texture(context, surface_texture)
+            .map_err(|(err, _)| err)?;
+        self.replace_surface(device, context, surface)
+    }
 }
 
 impl<Device: DeviceAPI> SwapChainData<Device> {
@@ -125,24 +195,9 @@ impl<Device: DeviceAPI> SwapChainData<Device> {
             device.surface_info(&new_back_buffer).id,
             self.context_id
         );
-        let new_front_buffer = match self.unattached_surface.as_mut() {
-            Some(surface) => {
-                debug!("Replacing unattached surface");
-                mem::replace(surface, new_back_buffer)
-            }
-            None => {
-                debug!("Replacing attached surface");
-                let new_front_buffer = device.unbind_surface_from_context(context)?.unwrap();
-                if let Err((err, mut new_back_buffer)) =
-                    device.bind_surface_to_context(context, new_back_buffer)
-                {
-                    debug!("Oh no, destroying new back buffer");
-                    let _ = device.destroy_surface(context, &mut new_back_buffer);
-                    return Err(err);
-                }
-                new_front_buffer
-            }
-        };
+        let new_front_buffer = self.back_buffer.take_surface(device, context)?;
+        self.back_buffer
+            .replace_surface(device, context, new_back_buffer)?;
 
         // Update the state
         debug!(
@@ -171,26 +226,15 @@ impl<Device: DeviceAPI> SwapChainData<Device> {
     ) -> Result<(), Error> {
         self.validate_context(device, context)?;
         other.validate_context(device, context)?;
-        if let (Some(surface), true) = (
-            self.unattached_surface.take(),
-            other.unattached_surface.is_none(),
-        ) {
-            debug!("Attaching surface {:?}", device.surface_info(&surface).id);
-            let old_surface = device.unbind_surface_from_context(context)?.unwrap();
-            if let Err((err, mut surface)) = device.bind_surface_to_context(context, surface) {
-                debug!("Oh no, destroying surface");
-                let _ = device.destroy_surface(context, &mut surface);
-                return Err(err);
-            }
-            debug!(
-                "Detaching surface {:?}",
-                device.surface_info(&old_surface).id
-            );
-            other.unattached_surface = Some(old_surface);
-            Ok(())
-        } else {
-            Err(Error::Failed)
-        }
+        let our_surface = self.back_buffer.take_surface(device, context)?;
+        let their_surface = other.back_buffer.take_surface(device, context)?;
+        mem::swap(&mut self.back_buffer, &mut other.back_buffer);
+        self.back_buffer
+            .replace_surface(device, context, our_surface)?;
+        other
+            .back_buffer
+            .replace_surface(device, context, their_surface)?;
+        Ok(())
     }
 
     // Resize the swap chain.
@@ -216,25 +260,9 @@ impl<Device: DeviceAPI> SwapChainData<Device> {
         }
         let surface_type = SurfaceType::Generic { size };
         let new_back_buffer = device.create_surface(context, self.surface_access, surface_type)?;
-        debug!(
-            "Surface {:?} is the new back buffer for context {:?}",
-            device.surface_info(&new_back_buffer).id,
-            self.context_id
-        );
-        let mut old_back_buffer = match self.unattached_surface.as_mut() {
-            Some(surface) => mem::replace(surface, new_back_buffer),
-            None => {
-                let old_back_buffer = device.unbind_surface_from_context(context)?.unwrap();
-                if let Err((err, mut new_back_buffer)) =
-                    device.bind_surface_to_context(context, new_back_buffer)
-                {
-                    debug!("Oh no, destroying new back buffer");
-                    let _ = device.destroy_surface(context, &mut new_back_buffer);
-                    return Err(err);
-                }
-                old_back_buffer
-            }
-        };
+        let mut old_back_buffer = self.back_buffer.take_surface(device, context)?;
+        self.back_buffer
+            .replace_surface(device, context, new_back_buffer)?;
         device.destroy_surface(context, &mut old_back_buffer)?;
         self.size = size;
         Ok(())
@@ -244,6 +272,30 @@ impl<Device: DeviceAPI> SwapChainData<Device> {
     // Called by a consumer.
     fn size(&self) -> Size2D<i32> {
         self.size
+    }
+
+    // Take the current back buffer.
+    // Called by a producer.
+    fn take_surface_texture(
+        &mut self,
+        device: &Device,
+        context: &mut Device::Context,
+    ) -> Result<Device::SurfaceTexture, Error> {
+        self.validate_context(device, context)?;
+        self.back_buffer.take_surface_texture(device, context)
+    }
+
+    // Recycle the current back buffer.
+    // Called by a producer.
+    fn recycle_surface_texture(
+        &mut self,
+        device: &Device,
+        context: &mut Device::Context,
+        surface_texture: Device::SurfaceTexture,
+    ) -> Result<(), Error> {
+        self.validate_context(device, context)?;
+        self.back_buffer
+            .replace_surface_texture(device, context, surface_texture)
     }
 
     // Take the current front buffer.
@@ -294,20 +346,20 @@ impl<Device: DeviceAPI> SwapChainData<Device> {
         }
 
         // Make the back buffer the current surface
-        let reattach = match self.unattached_surface.take() {
-            Some(surface) => {
-                let reattach = device.unbind_surface_from_context(context)?;
-                if let Err((err, mut surface)) = device.bind_surface_to_context(context, surface) {
-                    debug!("Oh no, destroying surfaces");
-                    let _ = device.destroy_surface(context, &mut surface);
-                    if let Some(mut reattach) = reattach {
-                        let _ = device.destroy_surface(context, &mut reattach);
-                    }
-                    return Err(err);
+        let reattach = if self.is_attached() {
+            None
+        } else {
+            let surface = self.back_buffer.take_surface(device, context)?;
+            let mut reattach = device.unbind_surface_from_context(context)?;
+            if let Err((err, mut surface)) = device.bind_surface_to_context(context, surface) {
+                debug!("Oh no, destroying surfaces");
+                let _ = device.destroy_surface(context, &mut surface);
+                if let Some(ref mut reattach) = reattach {
+                    let _ = device.destroy_surface(context, reattach);
                 }
-                reattach
+                return Err(err);
             }
-            None => None,
+            reattach
         };
 
         // Clear it
@@ -329,13 +381,15 @@ impl<Device: DeviceAPI> SwapChainData<Device> {
 
         // Reattach the old surface
         if let Some(surface) = reattach {
-            let old_surface = device.unbind_surface_from_context(context)?.unwrap();
+            let mut old_surface = device.unbind_surface_from_context(context)?.unwrap();
             if let Err((err, mut surface)) = device.bind_surface_to_context(context, surface) {
                 debug!("Oh no, destroying surface");
                 let _ = device.destroy_surface(context, &mut surface);
+                let _ = device.destroy_surface(context, &mut old_surface);
                 return Err(err);
             }
-            self.unattached_surface = Some(old_surface);
+            self.back_buffer
+                .replace_surface(device, context, old_surface)?;
         }
 
         // Restore the GL state
@@ -367,6 +421,14 @@ impl<Device: DeviceAPI> SwapChainData<Device> {
         Ok(())
     }
 
+    /// Is this the attached swap chain?
+    fn is_attached(&self) -> bool {
+        match self.back_buffer {
+            BackBuffer::Attached | BackBuffer::TakenAttached => true,
+            BackBuffer::Detached(_) | BackBuffer::TakenDetached => false,
+        }
+    }
+
     // Destroy the swap chain.
     // Called by the producer.
     // Returns an error if `context` is not the producer context for this swap chain.
@@ -376,7 +438,7 @@ impl<Device: DeviceAPI> SwapChainData<Device> {
             .pending_surface
             .take()
             .into_iter()
-            .chain(self.unattached_surface.take().into_iter())
+            .chain(self.back_buffer.take_surface(device, context).into_iter())
             .chain(self.recycled_surfaces.drain(..));
         for mut surface in surfaces {
             device.destroy_surface(context, &mut surface)?;
@@ -446,6 +508,28 @@ impl<Device: DeviceAPI> SwapChain<Device> {
         self.lock().size()
     }
 
+    // Take the current back buffer.
+    // Called by a producer.
+    pub fn take_surface_texture(
+        &self,
+        device: &Device,
+        context: &mut Device::Context,
+    ) -> Result<Device::SurfaceTexture, Error> {
+        self.lock().take_surface_texture(device, context)
+    }
+
+    // Recycle the current back buffer.
+    // Called by a producer.
+    pub fn recycle_surface_texture(
+        &self,
+        device: &Device,
+        context: &mut Device::Context,
+        surface_texture: Device::SurfaceTexture,
+    ) -> Result<(), Error> {
+        self.lock()
+            .recycle_surface_texture(device, context, surface_texture)
+    }
+
     // Clear the current back buffer.
     // Called by the producer.
     // Returns an error if `context` is not the producer context for this swap chain.
@@ -461,7 +545,7 @@ impl<Device: DeviceAPI> SwapChain<Device> {
 
     /// Is this the attached swap chain?
     pub fn is_attached(&self) -> bool {
-        self.lock().unattached_surface.is_none()
+        self.lock().is_attached()
     }
 
     /// Destroy the swap chain.
@@ -482,7 +566,7 @@ impl<Device: DeviceAPI> SwapChain<Device> {
             size,
             context_id: device.context_id(context),
             surface_access,
-            unattached_surface: None,
+            back_buffer: BackBuffer::Attached,
             pending_surface: None,
             recycled_surfaces: Vec::new(),
         }))))
@@ -501,7 +585,7 @@ impl<Device: DeviceAPI> SwapChain<Device> {
             size,
             context_id: device.context_id(context),
             surface_access,
-            unattached_surface: Some(surface),
+            back_buffer: BackBuffer::Detached(surface),
             pending_surface: None,
             recycled_surfaces: Vec::new(),
         }))))
