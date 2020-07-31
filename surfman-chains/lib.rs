@@ -68,6 +68,11 @@ struct SwapChainData<Device: DeviceAPI> {
     recycled_surfaces: Vec<Device::Surface>,
 }
 
+pub enum PreserveBuffer<'a> {
+    Yes(&'a Gl),
+    No,
+}
+
 enum BackBuffer<Device: DeviceAPI> {
     Attached,
     Detached(Device::Surface),
@@ -76,6 +81,17 @@ enum BackBuffer<Device: DeviceAPI> {
 }
 
 impl<Device: DeviceAPI> BackBuffer<Device> {
+    fn surface_info(
+        &self,
+        device: &Device,
+        context: &Device::Context,
+    ) -> Result<SurfaceInfo, Error> {
+        Ok(match *self {
+            BackBuffer::Attached => device.context_surface_info(context)?.unwrap(),
+            BackBuffer::Detached(ref surface) => device.surface_info(surface),
+            _ => return Err(Error::Failed),
+        })
+    }
     fn take_surface(
         &mut self,
         device: &Device,
@@ -157,6 +173,7 @@ impl<Device: DeviceAPI> SwapChainData<Device> {
         &mut self,
         device: &mut Device,
         context: &mut Device::Context,
+        preserve_buffer: PreserveBuffer<'_>,
     ) -> Result<(), Error> {
         debug!("Swap buffers on context {:?}", self.context_id);
         self.validate_context(device, context)?;
@@ -189,6 +206,8 @@ impl<Device: DeviceAPI> SwapChainData<Device> {
                 device.create_surface(context, self.surface_access, surface_type)
             })?;
 
+        let back_info = device.surface_info(&new_back_buffer);
+
         // Swap the buffers
         debug!(
             "Surface {:?} is the new back buffer for context {:?}",
@@ -198,6 +217,27 @@ impl<Device: DeviceAPI> SwapChainData<Device> {
         let new_front_buffer = self.back_buffer.take_surface(device, context)?;
         self.back_buffer
             .replace_surface(device, context, new_back_buffer)?;
+
+        if let PreserveBuffer::Yes(gl) = preserve_buffer {
+            let front_info = device.surface_info(&new_front_buffer);
+            gl.bind_framebuffer(gl::READ_FRAMEBUFFER, front_info.framebuffer_object);
+            debug_assert_eq!(gl.get_error(), gl::NO_ERROR);
+            gl.bind_framebuffer(gl::DRAW_FRAMEBUFFER, back_info.framebuffer_object);
+            debug_assert_eq!(gl.get_error(), gl::NO_ERROR);
+            gl.blit_framebuffer(
+                0,
+                0,
+                front_info.size.width,
+                front_info.size.height,
+                0,
+                0,
+                back_info.size.width,
+                back_info.size.height,
+                gl::COLOR_BUFFER_BIT | gl::DEPTH_BUFFER_BIT | gl::STENCIL_BUFFER_BIT,
+                gl::NEAREST,
+            );
+            debug_assert_eq!(gl.get_error(), gl::NO_ERROR);
+        }
 
         // Update the state
         debug!(
@@ -470,8 +510,9 @@ impl<Device: DeviceAPI> SwapChain<Device> {
         &self,
         device: &mut Device,
         context: &mut Device::Context,
+        preserve_buffer: PreserveBuffer<'_>,
     ) -> Result<(), Error> {
-        self.lock().swap_buffers(device, context)
+        self.lock().swap_buffers(device, context, preserve_buffer)
     }
 
     /// Swap the attached swap chain.
