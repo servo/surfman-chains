@@ -81,17 +81,6 @@ enum BackBuffer<Device: DeviceAPI> {
 }
 
 impl<Device: DeviceAPI> BackBuffer<Device> {
-    fn surface_info(
-        &self,
-        device: &Device,
-        context: &Device::Context,
-    ) -> Result<SurfaceInfo, Error> {
-        Ok(match *self {
-            BackBuffer::Attached => device.context_surface_info(context)?.unwrap(),
-            BackBuffer::Detached(ref surface) => device.surface_info(surface),
-            _ => return Err(Error::Failed),
-        })
-    }
     fn take_surface(
         &mut self,
         device: &Device,
