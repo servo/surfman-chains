@@ -547,8 +547,8 @@ impl<Device: DeviceAPI> SwapChain<Device> {
         self.lock().size()
     }
 
-    // Take the current back buffer.
-    // Called by a producer.
+    /// Take the current back buffer.
+    /// Called by a producer.
     pub fn take_surface_texture(
         &self,
         device: &Device,
@@ -557,8 +557,8 @@ impl<Device: DeviceAPI> SwapChain<Device> {
         self.lock().take_surface_texture(device, context)
     }
 
-    // Recycle the current back buffer.
-    // Called by a producer.
+    /// Recycle the current back buffer.
+    /// Called by a producer.
     pub fn recycle_surface_texture(
         &self,
         device: &Device,
@@ -576,9 +576,9 @@ impl<Device: DeviceAPI> SwapChain<Device> {
         self.lock().take_pending_surface()
     }
 
-    // Clear the current back buffer.
-    // Called by the producer.
-    // Returns an error if `context` is not the producer context for this swap chain.
+    /// Clear the current back buffer.
+    /// Called by the producer.
+    /// Returns an error if `context` is not the producer context for this swap chain.
     pub fn clear_surface(
         &self,
         device: &mut Device,
