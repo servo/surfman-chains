@@ -339,11 +339,20 @@ impl<Device: DeviceAPI> SwapChainData<Device> {
     }
 
     // Take the current front buffer.
+    // Returns the most recent recycled surface if there is no current front buffer.
     // Called by a consumer.
     fn take_surface(&mut self) -> Option<Device::Surface> {
         self.pending_surface
             .take()
             .or_else(|| self.recycled_surfaces.pop())
+    }
+
+    // Take the current front buffer.
+    // Returns `None` if there is no current front buffer.
+    // Called by a consumer.
+    fn take_pending_surface(&mut self) -> Option<Device::Surface> {
+        self.pending_surface
+            .take()
     }
 
     // Recycle the current front buffer.
@@ -571,6 +580,13 @@ impl<Device: DeviceAPI> SwapChain<Device> {
             .recycle_surface_texture(device, context, surface_texture)
     }
 
+    /// Take the current front buffer.
+    /// Returns `None` if there is no current front buffer.
+    /// Called by a consumer.
+    pub fn take_pending_surface(&self) -> Option<Device::Surface> {
+        self.lock().take_pending_surface()
+    }
+
     // Clear the current back buffer.
     // Called by the producer.
     // Returns an error if `context` is not the producer context for this swap chain.
@@ -641,6 +657,7 @@ where
     type Surface = Device::Surface;
 
     /// Take the current front buffer.
+    /// Returns the most recent recycled surface if there is no current front buffer.
     /// Called by a consumer.
     fn take_surface(&self) -> Option<Device::Surface> {
         self.lock().take_surface()
