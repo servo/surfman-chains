@@ -340,8 +340,7 @@ impl<Device: DeviceAPI> SwapChainData<Device> {
     // Returns `None` if there is no current front buffer.
     // Called by a consumer.
     fn take_pending_surface(&mut self) -> Option<Device::Surface> {
-        self.pending_surface
-            .take()
+        self.pending_surface.take()
     }
 
     // Recycle the current front buffer.
