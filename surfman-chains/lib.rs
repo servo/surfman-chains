@@ -143,6 +143,41 @@ impl<Device: DeviceAPI> BackBuffer<Device> {
             .map_err(|(err, _)| err)?;
         self.replace_surface(device, context, surface)
     }
+    fn attach(
+        &mut self,
+        device: &Device,
+        context: &mut Device::Context,
+    ) -> Result<(), Error> {
+        match self {
+            BackBuffer::Detached(_) => (),
+            _ => return Err(Error::Failed),
+        }
+	if device.context_surface_info(&context)?.is_some() {
+            return Err(Error::Failed);
+	}
+        let surface = match mem::replace(self, BackBuffer::Attached) {
+            BackBuffer::Detached(surface) => surface,
+            _ => unreachable!(),
+        };
+	device.bind_surface_to_context(context, surface).map_err(|(err, surface)| {
+            *self = BackBuffer::Detached(surface);
+            err
+	})?;
+	Ok(())
+    }
+    fn detach(
+        &mut self,
+        device: &Device,
+        context: &mut Device::Context,
+    ) -> Result<(), Error> {
+        match self {
+            BackBuffer::Attached => (),
+            _ => return Err(Error::Failed),
+        }
+        let surface = device.unbind_surface_from_context(context)?.ok_or(Error::Failed)?;
+	*self = BackBuffer::Detached(surface);
+	Ok(())
+    }
 }
 
 impl<Device: DeviceAPI> SwapChainData<Device> {
@@ -466,6 +501,26 @@ impl<Device: DeviceAPI> SwapChainData<Device> {
         }
     }
 
+    // Attach the swap chain to the context
+    // Called by the producer.
+    // Returns an error if `context` is not the producer context for this swap chain.
+    // Returns an error if the swap chain is attached or taken.
+    // Returns an error if `context` already has an attached surface.
+    fn attach(&mut self, device: &mut Device, context: &mut Device::Context) -> Result<(), Error> {
+        self.validate_context(device, context)?;
+	self.back_buffer.attach(device, context)
+    }
+
+    // Detach the swap chain from the context
+    // Called by the producer.
+    // Returns an error if `context` is not the producer context for this swap chain.
+    // Returns an error if the swap chain is detached or taken.
+    // Returns an error if `context` does not have an attached surface.
+    fn detach(&mut self, device: &mut Device, context: &mut Device::Context) -> Result<(), Error> {
+        self.validate_context(device, context)?;
+	self.back_buffer.detach(device, context)
+    }
+
     // Destroy the swap chain.
     // Called by the producer.
     // Returns an error if `context` is not the producer context for this swap chain.
@@ -481,7 +536,7 @@ impl<Device: DeviceAPI> SwapChainData<Device> {
             device.destroy_surface(context, &mut surface)?;
         }
         Ok(())
-    }
+    }    
 }
 
 /// A thread-safe swap chain.
@@ -591,6 +646,24 @@ impl<Device: DeviceAPI> SwapChain<Device> {
     /// Is this the attached swap chain?
     pub fn is_attached(&self) -> bool {
         self.lock().is_attached()
+    }
+
+    /// Attach the swap chain to the context
+    /// Called by the producer.
+    /// Returns an error if `context` is not the producer context for this swap chain.
+    /// Returns an error if the swap chain is attached or taken.
+    /// Returns an error if `context` already has an attached surface.
+    pub fn attach(&self, device: &mut Device, context: &mut Device::Context) -> Result<(), Error> {
+        self.lock().attach(device, context)
+    }
+
+    /// Detach the swap chain from the context
+    /// Called by the producer.
+    /// Returns an error if `context` is not the producer context for this swap chain.
+    /// Returns an error if the swap chain is detached or taken.
+    /// Returns an error if `context` does not have an attached surface.
+    pub fn detach(&self, device: &mut Device, context: &mut Device::Context) -> Result<(), Error> {
+        self.lock().detach(device, context)
     }
 
     /// Destroy the swap chain.
