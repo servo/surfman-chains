@@ -1,6 +1,6 @@
 [package]
 name = "surfman-chains"
-version = "0.5.1"
+version = "0.6.0"
 authors = ["Alan Jeffrey <ajeffrey@mozilla.com>"]
 edition = "2018"
 description = "An implementation of double-buffered swap chains for surfman"
@@ -16,4 +16,4 @@ fnv = "1.0"
 log = "0.4"
 sparkle = "0.1"
 surfman-chains-api = "0.2"
-surfman = "0.3"
+surfman = "0.4"
