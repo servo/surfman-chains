@@ -3,3 +3,7 @@ members = [
     "surfman-chains-api",
     "surfman-chains",
 ]
+
+[patch.crates-io]
+# TODO(bryce): Remove this when the PR is merged: https://github.com/servo/surfman/pull/234
+surfman = { git = "https://github.com/Bryce-MW/surfman", branch = "euclid-update" }
