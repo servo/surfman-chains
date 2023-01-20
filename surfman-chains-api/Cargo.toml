@@ -3,9 +3,9 @@ name = "surfman-chains-api"
 version = "0.2.0"
 authors = ["Alan Jeffrey <ajeffrey@mozilla.com>"]
 edition = "2018"
-description = "An implementation of double-buffered swap chains for surfman"
+description = "An implementation of double-buffered swap chains for surfman."
 license = "MPL-2.0"
-repository = "https://github.com/asajeffrey/surfman-chains"
+repository = "https://github.com/servo/surfman-chains"
 
 [lib]
 path = "lib.rs"
