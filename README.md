@@ -1,6 +1,6 @@
 # surfman-chains
 
-[![Build Status](https://travis-ci.org/asajeffrey/surfman-chains.svg?branch=master)](https://travis-ci.org/asajeffrey/surfman-chains)
+**DEPRECATED: This functionality has been integrated into [surfman](github.com/servo/surfman) under the `chains` feature**
 
 A thread-safe implementation of double-buffered swap chains for surfman.
 
